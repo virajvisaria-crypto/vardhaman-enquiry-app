@@ -5,6 +5,10 @@
   <div class="header-actions">
     <a href="{{ url_for('enquiry_edit', eid=enquiry.id) }}" class="btn">Edit</a>
     <a href="{{ url_for('enquiry_quote', eid=enquiry.id) }}" class="btn btn-primary">Generate Quote</a>
+    <form method="POST" action="{{ url_for('enquiry_delete', eid=enquiry.id) }}" style="display:inline"
+          onsubmit="return confirm('Delete this enquiry for {{ enquiry.customer_name }}? This can\'t be undone.');">
+      <button type="submit" class="btn btn-danger">Delete</button>
+    </form>
   </div>
 </div>
 

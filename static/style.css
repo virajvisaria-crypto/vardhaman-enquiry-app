@@ -123,6 +123,13 @@ h2 { font-size: 1.1rem; margin: 28px 0 12px; color: var(--steel-dark); }
 }
 .btn-primary:hover { background: var(--steel-dark); }
 
+.btn-danger {
+  background: #fff;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
 /* Forms */
 .stacked-form, .auth-card form {
   display: flex;

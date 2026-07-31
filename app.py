@@ -388,6 +388,21 @@ def enquiry_edit(eid):
     return render_template("form.html", enquiry=enquiry)
 
 
+@app.route("/enquiry/<int:eid>/delete", methods=["POST"])
+@login_required
+def enquiry_delete(eid):
+    db = get_db()
+    enquiry = db.execute("SELECT * FROM enquiries WHERE id = ?", (eid,)).fetchone()
+    if enquiry is None:
+        flash("Enquiry not found.", "error")
+        return redirect(url_for("enquiries"))
+    db.execute("DELETE FROM orders WHERE enquiry_id = ?", (eid,))
+    db.execute("DELETE FROM enquiries WHERE id = ?", (eid,))
+    db.commit()
+    flash(f"Deleted enquiry for {enquiry['customer_name']}.", "success")
+    return redirect(url_for("enquiries"))
+
+
 # ---------------------------------------------------------------------------
 # Orders (payment tracking)
 # ---------------------------------------------------------------------------
