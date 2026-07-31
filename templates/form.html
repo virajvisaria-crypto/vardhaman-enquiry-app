@@ -1,82 +1,42 @@
 {% extends "base.html" %}
-
-{% block title %}{% if enquiry %}Edit{% else %}Add{% endif %} Enquiry - Vardhaman Enquiry Hub{% endblock %}
-
 {% block content %}
-<div class="page">
-    <a href="{{ url_for('list_enquiries') }}" class="btn-back">← Back</a>
-    
-    <h2>{% if enquiry %}Edit Enquiry{% else %}Add Enquiry{% endif %}</h2>
-    
-    <form method="POST" class="enquiry-form">
-        <div class="form-group">
-            <label>Customer Name *</label>
-            <input type="text" name="customer_name" value="{{ enquiry.customer_name if enquiry else '' }}" required placeholder="e.g., Acme Ltd">
-        </div>
-        
-        <div class="form-group">
-            <label>Company Name</label>
-            <input type="text" name="company_name" value="{{ enquiry.company_name if enquiry else '' }}" placeholder="Optional">
-        </div>
-        
-        <div class="form-group">
-            <label>Phone *</label>
-            <input type="tel" name="phone" value="{{ enquiry.phone if enquiry else '' }}" required placeholder="Mobile number">
-        </div>
-        
-        <div class="form-group">
-            <label>Email</label>
-            <input type="email" name="email" value="{{ enquiry.email if enquiry else '' }}" placeholder="Optional">
-        </div>
-        
-        <div class="form-group">
-            <label>Product Category</label>
-            <select name="product_category">
-                <option value="">Select product</option>
-                <option value="Rod" {% if enquiry and enquiry.product_category == 'Rod' %}selected{% endif %}>Rod</option>
-                <option value="Wheel" {% if enquiry and enquiry.product_category == 'Wheel' %}selected{% endif %}>Wheel</option>
-                <option value="Pad" {% if enquiry and enquiry.product_category == 'Pad' %}selected{% endif %}>Pad</option>
-                <option value="Sheet" {% if enquiry and enquiry.product_category == 'Sheet' %}selected{% endif %}>Sheet</option>
-                <option value="Coating" {% if enquiry and enquiry.product_category == 'Coating' %}selected{% endif %}>Coating</option>
-                <option value="Roller" {% if enquiry and enquiry.product_category == 'Roller' %}selected{% endif %}>Roller</option>
-                <option value="Custom" {% if enquiry and enquiry.product_category == 'Custom' %}selected{% endif %}>Custom</option>
-            </select>
-        </div>
-        
-        <div class="form-group">
-            <label>Specs (size, hardness, color, qty)</label>
-            <textarea name="specs" placeholder="e.g., OD 70 x ID 56 x 232mm, 85A, Red, 23 nos." rows="3">{{ enquiry.specs if enquiry else '' }}</textarea>
-        </div>
-        
-        <div class="form-group">
-            <label>Delivery Needed By</label>
-            <input type="date" name="delivery_date" value="{{ enquiry.delivery_date if enquiry else '' }}">
-        </div>
-        
-        <div class="form-row">
-            <div class="form-group">
-                <label>Rate</label>
-                <input type="number" name="rate" value="{{ enquiry.rate if enquiry else '' }}" placeholder="0">
-            </div>
-            <div class="form-group">
-                <label>Unit</label>
-                <select name="rate_unit">
-                    <option value="nos." {% if enquiry and enquiry.rate_unit == 'nos.' %}selected{% endif %}>nos.</option>
-                    <option value="kg" {% if enquiry and enquiry.rate_unit == 'kg' %}selected{% endif %}>kg</option>
-                    <option value="meter" {% if enquiry and enquiry.rate_unit == 'meter' %}selected{% endif %}>meter</option>
-                </select>
-            </div>
-        </div>
-        
-        <div class="form-group">
-            <label>Partner Name *</label>
-            <input type="text" name="partner_name" value="{{ enquiry.partner_name if enquiry else session.user_name }}" required placeholder="Your name">
-        </div>
-        
-        <div class="form-actions">
-            <button type="submit" class="btn-primary">Save Enquiry</button>
-            <a href="{{ url_for('list_enquiries') }}" class="btn-secondary">Cancel</a>
-        </div>
-    </form>
-</div>
+<h1>{{ 'Edit Enquiry' if enquiry else 'Add Enquiry' }}</h1>
+<form method="POST" class="stacked-form">
+  <label>Customer name *
+    <input type="text" name="customer_name" required value="{{ enquiry.customer_name if enquiry else '' }}">
+  </label>
+  <label>Phone *
+    <input type="tel" name="phone" required value="{{ enquiry.phone if enquiry else '' }}">
+  </label>
+  <label>Company name
+    <input type="text" name="company_name" value="{{ enquiry.company_name if enquiry else '' }}">
+  </label>
+  <label>Email
+    <input type="email" name="email" value="{{ enquiry.email if enquiry else '' }}">
+  </label>
+  <label>Product category
+    <input type="text" name="product_category" value="{{ enquiry.product_category if enquiry else '' }}" placeholder="e.g. PU Roller, PU Wheel, Sheet">
+  </label>
+  <label>Specs
+    <textarea name="specs" rows="3">{{ enquiry.specs if enquiry else '' }}</textarea>
+  </label>
+  <div class="form-row">
+    <label>Rate
+      <input type="number" step="0.01" name="rate" value="{{ enquiry.rate if enquiry else '' }}">
+    </label>
+    <label>Rate unit
+      <input type="text" name="rate_unit" value="{{ enquiry.rate_unit if enquiry else '' }}" placeholder="per piece / per kg">
+    </label>
+    <label>Quantity
+      <input type="number" step="0.01" name="quantity" value="{{ enquiry.quantity if enquiry else 1 }}">
+    </label>
+  </div>
+  <label>Delivery date
+    <input type="date" name="delivery_date" value="{{ enquiry.delivery_date if enquiry else '' }}">
+  </label>
+  <label>Partner name (accountable) *
+    <input type="text" name="partner_name" required value="{{ enquiry.partner_name if enquiry else current_user.name }}">
+  </label>
+  <button type="submit" class="btn btn-primary">{{ 'Save changes' if enquiry else 'Add Enquiry' }}</button>
+</form>
 {% endblock %}

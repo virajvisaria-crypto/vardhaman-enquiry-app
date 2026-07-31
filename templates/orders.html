@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Orders</h1>
+</div>
+
+<div class="filter-tabs">
+  <a href="{{ url_for('orders_page', status='all') }}" class="{{ 'active' if status == 'all' }}">All</a>
+  <a href="{{ url_for('orders_page', status='pending_advance') }}" class="{{ 'active' if status == 'pending_advance' }}">Pending advance</a>
+  <a href="{{ url_for('orders_page', status='pending_balance') }}" class="{{ 'active' if status == 'pending_balance' }}">Pending balance</a>
+  <a href="{{ url_for('orders_page', status='fully_paid') }}" class="{{ 'active' if status == 'fully_paid' }}">Fully paid</a>
+  <a href="{{ url_for('orders_page', status='overdue') }}" class="{{ 'active' if status == 'overdue' }}">Overdue</a>
+</div>
+
+{% if items %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Customer</th>
+        <th>Product</th>
+        <th>Delivery</th>
+        <th>Advance</th>
+        <th>Balance</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      {% set e = item.row %}
+      <tr class="{{ 'row-overdue' if item.overdue }}">
+        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a></td>
+        <td>{{ e.product_category or '-' }}</td>
+        <td>{{ e.delivery_date or '-' }}{% if item.overdue %} <span class="tag tag-overdue">overdue</span>{% endif %}</td>
+        <td>{{ '✅' if e.advance_received else '—' }}</td>
+        <td>{{ '✅' if e.balance_received else '—' }}</td>
+        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty-state">Nothing matches this filter.</p>
+{% endif %}
+{% endblock %}

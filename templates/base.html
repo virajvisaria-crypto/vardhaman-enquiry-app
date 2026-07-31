@@ -1,24 +1,43 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Vardhaman Enquiry Hub{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ settings.company_name if settings else 'Vardhaman Elastomer' }} - Enquiries</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    {% if session.user_id %}
-    <nav class="navbar">
-        <h1>Vardhaman Enquiry Hub</h1>
-        <div class="nav-right">
-            <span>{{ session.user_name }}</span>
-            <a href="{{ url_for('logout') }}" class="btn-logout">Logout</a>
-        </div>
+  {% if current_user %}
+  <header class="topbar">
+    <div class="brand">{{ settings.company_name }}</div>
+    <nav class="tabs">
+      <a href="{{ url_for('enquiries') }}" class="{{ 'active' if request.path.startswith('/enquiries') or request.path == '/' else '' }}">Enquiries</a>
+      <a href="{{ url_for('enquiry_add') }}" class="{{ 'active' if request.path == url_for('enquiry_add') else '' }}">Add Enquiry</a>
+      <a href="{{ url_for('orders_page') }}" class="{{ 'active' if request.path.startswith('/orders') else '' }}">Orders</a>
+      <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.path.startswith('/dashboard') else '' }}">Dashboard</a>
+      {% if current_user.is_admin %}
+      <a href="{{ url_for('settings_page') }}" class="{{ 'active' if request.path.startswith('/settings') else '' }}">Settings</a>
+      {% endif %}
     </nav>
-    {% endif %}
-    
-    <div class="container">
-        {% block content %}{% endblock %}
+    <div class="user-info">
+      <span>{{ current_user.name }}{% if current_user.is_admin %} (admin){% endif %}</span>
+      <a href="{{ url_for('logout') }}" class="logout-link">Log out</a>
     </div>
+  </header>
+  {% endif %}
+
+  <main class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-wrap">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>

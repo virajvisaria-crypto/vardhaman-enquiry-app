@@ -1,36 +1,43 @@
 {% extends "base.html" %}
-
-{% block title %}Enquiries - Vardhaman Enquiry Hub{% endblock %}
-
 {% block content %}
-<div class="page">
-    <div class="header">
-        <h2>Enquiries</h2>
-        <a href="{{ url_for('add_enquiry') }}" class="btn-primary">+ Add Enquiry</a>
-    </div>
-    
-    <form method="GET" class="search-form">
-        <input type="text" name="search" placeholder="Search customer..." value="{{ search }}" class="search-input">
-    </form>
-    
-    {% if enquiries %}
-    <div class="enquiry-list">
-        {% for enquiry in enquiries %}
-        <div class="enquiry-card" onclick="location.href='{{ url_for('view_enquiry', id=enquiry.id) }}'">
-            <div class="enquiry-header">
-                <h3>{{ enquiry.customer_name }}</h3>
-                <span class="company">{{ enquiry.company_name or 'N/A' }}</span>
-            </div>
-            <p class="specs">{{ enquiry.product_category or 'N/A' }} • {{ enquiry.specs or 'No specs' }}</p>
-            <div class="enquiry-footer">
-                <span class="date">{{ enquiry.created_at[:10] }}</span>
-                <span class="partner">{{ enquiry.partner_name }}</span>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <p class="empty">No enquiries yet. <a href="{{ url_for('add_enquiry') }}">Add one</a></p>
-    {% endif %}
+<div class="page-header">
+  <h1>Enquiries</h1>
+  <a href="{{ url_for('enquiry_add') }}" class="btn btn-primary">+ Add Enquiry</a>
 </div>
+
+<form class="search-bar" method="GET">
+  <input type="text" name="q" placeholder="Search by customer or company name" value="{{ q }}">
+  <button type="submit" class="btn">Search</button>
+</form>
+
+{% if enquiries %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Customer</th>
+        <th>Company</th>
+        <th>Product</th>
+        <th>Partner</th>
+        <th>Delivery</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in enquiries %}
+      <tr>
+        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a></td>
+        <td>{{ e.company_name or '-' }}</td>
+        <td>{{ e.product_category or '-' }}</td>
+        <td>{{ e.partner_name }}</td>
+        <td>{{ e.delivery_date or '-' }}</td>
+        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty-state">No enquiries yet. Add the first one to get started.</p>
+{% endif %}
 {% endblock %}

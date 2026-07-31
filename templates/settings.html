@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+<p class="muted small">Only admin partners can edit this. Changes apply to every quote immediately.</p>
+
+<form method="POST" class="stacked-form">
+  <h2>Company details</h2>
+  <label>Company name
+    <input type="text" name="company_name" value="{{ settings.company_name }}">
+  </label>
+  <label>Location
+    <input type="text" name="company_location" value="{{ settings.company_location }}">
+  </label>
+  <label>GST number
+    <input type="text" name="gst_number" value="{{ settings.gst_number }}">
+  </label>
+
+  <h2>Bank details</h2>
+  <label>Account name
+    <input type="text" name="bank_account_name" value="{{ settings.bank_account_name }}">
+  </label>
+  <label>Account number
+    <input type="text" name="bank_account_number" value="{{ settings.bank_account_number }}">
+  </label>
+  <label>IFSC
+    <input type="text" name="bank_ifsc" value="{{ settings.bank_ifsc }}">
+  </label>
+  <label>Bank name
+    <input type="text" name="bank_name" value="{{ settings.bank_name }}">
+  </label>
+
+  <h2>Payment terms</h2>
+  <div class="form-row">
+    <label>Advance percentage
+      <input type="number" step="1" min="0" max="100" name="advance_percent" value="{{ settings.advance_percent }}">
+    </label>
+    <label>Balance due (days after delivery)
+      <input type="number" step="1" min="0" name="balance_days" value="{{ settings.balance_days }}">
+    </label>
+  </div>
+
+  <button type="submit" class="btn btn-primary">Save settings</button>
+</form>
+{% endblock %}

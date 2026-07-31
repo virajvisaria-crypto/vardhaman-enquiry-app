@@ -1,30 +1,19 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign Up - Vardhaman Enquiry Hub</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body class="login-page">
-    <div class="login-container">
-        <div class="login-card">
-            <h1>Vardhaman Elastomer</h1>
-            <h2>Create Account</h2>
-            
-            {% if error %}
-            <div class="error">{{ error }}</div>
-            {% endif %}
-            
-            <form method="POST">
-                <input type="text" name="name" placeholder="Your name" required>
-                <input type="email" name="email" placeholder="Email" required>
-                <input type="password" name="password" placeholder="Password" required>
-                <button type="submit" class="btn-primary">Sign Up</button>
-            </form>
-            
-            <p class="toggle">Already have an account? <a href="{{ url_for('login') }}">Sign In</a></p>
-        </div>
-    </div>
-</body>
-</html>
+{% extends "base.html" %}
+{% block content %}
+<div class="auth-card">
+  <h1>Sign up</h1>
+  <form method="POST">
+    <label>Your name
+      <input type="text" name="name" required autofocus>
+    </label>
+    <label>Email
+      <input type="email" name="email" required>
+    </label>
+    <label>Password
+      <input type="password" name="password" required>
+    </label>
+    <button type="submit" class="btn btn-primary">Create account</button>
+  </form>
+  <p class="auth-switch">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+{% endblock %}
