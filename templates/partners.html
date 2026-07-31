@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Partner access</h1>
+  <a href="{{ url_for('settings_page') }}" class="btn">Back to Settings</a>
+</div>
+
+<p class="muted small">
+  Sign-up is closed. This is the only way accounts get created now. Check this list
+  first if you're not sure who currently has access, anyone here can log in.
+</p>
+
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Status</th>
+        <th>Role</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.name }}</td>
+        <td>{{ u.email }}</td>
+        <td>{{ 'Active' if u.is_active else 'Disabled' }}</td>
+        <td>{{ 'Admin' if u.is_admin else 'Partner' }}</td>
+        <td class="partner-actions">
+          {% if u.id != current_user.id %}
+          <form method="POST" action="{{ url_for('partners_toggle_active', uid=u.id) }}" style="display:inline">
+            <button type="submit" class="btn btn-small">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+          </form>
+          <form method="POST" action="{{ url_for('partners_toggle_admin', uid=u.id) }}" style="display:inline">
+            <button type="submit" class="btn btn-small">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button>
+          </form>
+          {% else %}
+          <span class="muted small">(you)</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Add a partner</h2>
+<form method="POST" action="{{ url_for('partners_add') }}" class="stacked-form">
+  <label>Name
+    <input type="text" name="name" required>
+  </label>
+  <label>Email
+    <input type="email" name="email" required>
+  </label>
+  <label>Temporary password
+    <input type="text" name="password" required minlength="6">
+  </label>
+  <button type="submit" class="btn btn-primary">Create account</button>
+</form>
+<p class="muted small">
+  Share the temporary password with them directly (WhatsApp, in person). They can
+  change it themselves afterwards under Account.
+</p>
+{% endblock %}

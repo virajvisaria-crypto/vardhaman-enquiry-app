@@ -120,6 +120,10 @@ def init_db():
         db.execute("ALTER TABLE enquiries ADD COLUMN quantity REAL DEFAULT 1")
         db.commit()
 
+    if "is_active" not in user_cols:
+        db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+        db.commit()
+
     # make sure exactly one admin exists (earliest-created user, if none flagged)
     admin_row = db.execute("SELECT id FROM users WHERE is_admin = 1 LIMIT 1").fetchone()
     if admin_row is None:
@@ -171,6 +175,11 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("login"))
+        user = get_current_user()
+        if user is None or not user["is_active"]:
+            session.clear()
+            flash("Your access has been disabled. Contact your admin.", "error")
+            return redirect(url_for("login"))
         return view(*args, **kwargs)
     return wrapped
 
@@ -198,6 +207,17 @@ def now_str():
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    """Bootstrap-only. Works exactly once, when the users table is empty, so the
+    very first admin account can be created without touching the database by
+    hand. After that it always redirects to login. New partners are added by an
+    admin from Settings > Partners instead of self-signup.
+    """
+    db = get_db()
+    any_user = db.execute("SELECT id FROM users LIMIT 1").fetchone()
+    if any_user is not None:
+        flash("Sign-up is closed. Ask your admin to create your account from Settings.", "error")
+        return redirect(url_for("login"))
+
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
@@ -205,23 +225,12 @@ def register():
         if not email or not password or not name:
             flash("Name, email and password are all required.", "error")
             return render_template("register.html")
-        db = get_db()
-        existing = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-        if existing:
-            flash("An account with that email already exists.", "error")
-            return render_template("register.html")
         db.execute(
-            "INSERT INTO users (email, password, name, created_at, is_admin) VALUES (?, ?, ?, ?, 0)",
+            "INSERT INTO users (email, password, name, created_at, is_admin, is_active) VALUES (?, ?, ?, ?, 1, 1)",
             (email, generate_password_hash(password), name, now_str()),
         )
         db.commit()
-        # first-ever user becomes admin
-        admin_row = db.execute("SELECT id FROM users WHERE is_admin = 1 LIMIT 1").fetchone()
-        if admin_row is None:
-            first_user = db.execute("SELECT id FROM users ORDER BY id ASC LIMIT 1").fetchone()
-            db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (first_user["id"],))
-            db.commit()
-        flash("Account created. Please log in.", "success")
+        flash("Admin account created. Please log in.", "success")
         return redirect(url_for("login"))
     return render_template("register.html")
 
@@ -236,6 +245,9 @@ def login():
         if user is None or not check_password_hash(user["password"], password):
             flash("Incorrect email or password.", "error")
             return render_template("login.html")
+        if not user["is_active"]:
+            flash("Your access has been disabled. Contact your admin.", "error")
+            return render_template("login.html")
         session["user_id"] = user["id"]
         return redirect(url_for("enquiries"))
     return render_template("login.html")
@@ -245,6 +257,29 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/account/password", methods=["GET", "POST"])
+@login_required
+def account_password():
+    if request.method == "POST":
+        current = request.form.get("current_password", "")
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        user = get_current_user()
+        if not check_password_hash(user["password"], current):
+            flash("Current password is incorrect.", "error")
+        elif len(new) < 6:
+            flash("New password must be at least 6 characters.", "error")
+        elif new != confirm:
+            flash("New password and confirmation don't match.", "error")
+        else:
+            db = get_db()
+            db.execute("UPDATE users SET password = ? WHERE id = ?", (generate_password_hash(new), user["id"]))
+            db.commit()
+            flash("Password updated.", "success")
+            return redirect(url_for("enquiries"))
+    return render_template("account_password.html")
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +550,79 @@ def settings_page():
         flash("Settings updated.", "success")
         return redirect(url_for("settings_page"))
     return render_template("settings.html", settings=get_settings())
+
+
+@app.route("/settings/partners")
+@login_required
+@admin_required
+def partners_page():
+    db = get_db()
+    users = db.execute("SELECT * FROM users ORDER BY created_at ASC").fetchall()
+    return render_template("partners.html", users=users)
+
+
+@app.route("/settings/partners/add", methods=["POST"])
+@login_required
+@admin_required
+def partners_add():
+    db = get_db()
+    name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    if not name or not email or not password:
+        flash("Name, email and a temporary password are all required.", "error")
+        return redirect(url_for("partners_page"))
+    existing = db.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+    if existing:
+        flash("That email already has an account.", "error")
+        return redirect(url_for("partners_page"))
+    db.execute(
+        "INSERT INTO users (email, password, name, created_at, is_admin, is_active) VALUES (?, ?, ?, ?, 0, 1)",
+        (email, generate_password_hash(password), name, now_str()),
+    )
+    db.commit()
+    flash(f"Account created for {name}. Share the temporary password with them directly, they can change it under Account.", "success")
+    return redirect(url_for("partners_page"))
+
+
+@app.route("/settings/partners/<int:uid>/toggle-active", methods=["POST"])
+@login_required
+@admin_required
+def partners_toggle_active(uid):
+    if uid == session.get("user_id"):
+        flash("You can't disable your own account.", "error")
+        return redirect(url_for("partners_page"))
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    if user is None:
+        flash("Account not found.", "error")
+        return redirect(url_for("partners_page"))
+    new_status = 0 if user["is_active"] else 1
+    db.execute("UPDATE users SET is_active = ? WHERE id = ?", (new_status, uid))
+    db.commit()
+    flash(f"{user['name']} {'enabled' if new_status else 'disabled'}.", "success")
+    return redirect(url_for("partners_page"))
+
+
+@app.route("/settings/partners/<int:uid>/toggle-admin", methods=["POST"])
+@login_required
+@admin_required
+def partners_toggle_admin(uid):
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    if user is None:
+        flash("Account not found.", "error")
+        return redirect(url_for("partners_page"))
+    if user["is_admin"]:
+        admin_count = db.execute("SELECT COUNT(*) c FROM users WHERE is_admin = 1").fetchone()["c"]
+        if admin_count <= 1:
+            flash("Can't remove the last admin. Make someone else admin first.", "error")
+            return redirect(url_for("partners_page"))
+    new_status = 0 if user["is_admin"] else 1
+    db.execute("UPDATE users SET is_admin = ? WHERE id = ?", (new_status, uid))
+    db.commit()
+    flash(f"{user['name']} {'is now' if new_status else 'is no longer'} an admin.", "success")
+    return redirect(url_for("partners_page"))
 
 
 # ---------------------------------------------------------------------------

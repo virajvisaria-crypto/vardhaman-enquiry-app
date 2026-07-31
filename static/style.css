@@ -189,6 +189,9 @@ input:focus, textarea:focus, select:focus {
 .data-table a { color: var(--steel-dark); }
 .row-overdue { background: #faf1ed; }
 
+.partner-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-small { padding: 5px 10px; font-size: 0.8rem; }
+
 .tag { font-size: 0.72rem; padding: 2px 6px; border-radius: 3px; }
 .tag-overdue { background: var(--danger); color: #fff; }
 

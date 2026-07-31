@@ -21,6 +21,7 @@
     </nav>
     <div class="user-info">
       <span>{{ current_user.name }}{% if current_user.is_admin %} (admin){% endif %}</span>
+      <a href="{{ url_for('account_password') }}" class="logout-link">Account</a>
       <a href="{{ url_for('logout') }}" class="logout-link">Log out</a>
     </div>
   </header>

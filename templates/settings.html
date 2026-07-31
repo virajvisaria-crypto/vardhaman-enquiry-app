@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Settings</h1>
+<div class="page-header">
+  <h1>Settings</h1>
+  <a href="{{ url_for('partners_page') }}" class="btn">Manage partner access</a>
+</div>
 <p class="muted small">Only admin partners can edit this. Changes apply to every quote immediately.</p>
 
 <form method="POST" class="stacked-form">
