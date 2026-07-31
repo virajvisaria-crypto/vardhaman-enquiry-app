@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Quote - {{ enquiry.customer_name }}{% endblock %}
+
+{% block content %}
+<div class="page">
+    <a href="{{ url_for('view_enquiry', id=enquiry.id) }}" class="btn-back">← Back</a>
+    
+    <div class="quote-container">
+        <h2>Quote</h2>
+        
+        <div class="quote-header">
+            <p><strong>Vardhaman Elastomer LLP</strong></p>
+            <p>Matunga, Mumbai</p>
+            <p>GST: 27AAWFV2676B1ZP</p>
+        </div>
+        
+        <div class="quote-content">
+            <div class="quote-section">
+                <h3>Bill To</h3>
+                <p><strong>{{ enquiry.customer_name }}</strong></p>
+                <p>{{ enquiry.company_name or '' }}</p>
+                <p>{{ enquiry.phone }}</p>
+            </div>
+            
+            <div class="quote-section">
+                <h3>Product Details</h3>
+                <p><strong>{{ enquiry.product_category }}</strong></p>
+                <p>Specs: {{ enquiry.specs }}</p>
+                <p>Delivery: {{ enquiry.delivery_date }}</p>
+            </div>
+            
+            <div class="quote-section">
+                <h3>Pricing</h3>
+                <p>Rate: ₹{{ enquiry.rate }}</p>
+                <p><strong>Advance (25%): ₹{{ advance }}</strong></p>
+                <p><strong>Balance: ₹{{ balance }}</strong></p>
+            </div>
+            
+            <div class="quote-section">
+                <h3>Payment Terms</h3>
+                <p>25% advance payment to proceed with order</p>
+                <p>Balance payment due 30 days post-delivery</p>
+            </div>
+            
+            <div class="quote-section">
+                <h3>Bank Details</h3>
+                <p class="placeholder">[Bank details - add in admin settings]</p>
+            </div>
+        </div>
+        
+        <div class="quote-actions">
+            <button onclick="copyQuote()" class="btn-primary">Copy Quote to Clipboard</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyQuote() {
+    const text = `{{ quote_text }}`;
+    navigator.clipboard.writeText(text).then(() => {
+        alert('Quote copied to clipboard');
+    });
+}
+</script>
+{% endblock %}

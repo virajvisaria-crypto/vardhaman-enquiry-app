@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}{{ enquiry.customer_name }} - Vardhaman Enquiry Hub{% endblock %}
+
+{% block content %}
+<div class="page">
+    <a href="{{ url_for('list_enquiries') }}" class="btn-back">← Back</a>
+    
+    <div class="detail-container">
+        <div class="detail-header">
+            <h2>{{ enquiry.customer_name }}</h2>
+            <a href="{{ url_for('edit_enquiry', id=enquiry.id) }}" class="btn-secondary">Edit</a>
+        </div>
+        
+        <div class="detail-section">
+            <h3>Contact</h3>
+            <p><strong>Company:</strong> {{ enquiry.company_name or 'N/A' }}</p>
+            <p><strong>Phone:</strong> {{ enquiry.phone }}</p>
+            <p><strong>Email:</strong> {{ enquiry.email or 'N/A' }}</p>
+        </div>
+        
+        <div class="detail-section">
+            <h3>Requirement</h3>
+            <p><strong>Product:</strong> {{ enquiry.product_category or 'N/A' }}</p>
+            <p><strong>Specs:</strong> {{ enquiry.specs or 'N/A' }}</p>
+            <p><strong>Delivery Needed:</strong> {{ enquiry.delivery_date or 'N/A' }}</p>
+            <p><strong>Rate:</strong> ₹{{ enquiry.rate or 'N/A' }} per {{ enquiry.rate_unit or 'N/A' }}</p>
+        </div>
+        
+        <div class="detail-section">
+            <h3>Entry</h3>
+            <p><strong>Partner:</strong> {{ enquiry.partner_name }}</p>
+            <p><strong>Date:</strong> {{ enquiry.created_at[:10] }}</p>
+        </div>
+        
+        <div class="detail-actions">
+            {% if enquiry.rate %}
+            <a href="{{ url_for('generate_quote', id=enquiry.id) }}" class="btn-primary">Generate Quote</a>
+            {% endif %}
+        </div>
+        
+        <div class="detail-section">
+            <h3>Order Status</h3>
+            <form method="POST" action="{{ url_for('update_order', id=enquiry.id) }}" class="order-form">
+                <label>
+                    <input type="checkbox" name="advance_received" {% if order and order.advance_received %}checked{% endif %}>
+                    Advance Received
+                </label>
+                <label>
+                    <input type="checkbox" name="balance_received" {% if order and order.balance_received %}checked{% endif %}>
+                    Balance Received
+                </label>
+                <button type="submit" class="btn-secondary">Save Status</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
