@@ -11,11 +11,11 @@
 
 <p class="muted small">
   {% if show_completed %}
-  All confirmed orders, including completed ones, earliest-stage and soonest-due first.
+  All confirmed orders, including completed ones.
   {% else %}
-  Active orders only, earliest-stage and soonest-due first. Completed orders are hidden.
+  Active orders only. Completed orders are hidden.
   {% endif %}
-  Enquiries only appear here once marked Confirmed on their detail page.
+  Click a column header to sort. Enquiries only appear here once marked Confirmed on their detail page.
 </p>
 
 {% if items %}
@@ -23,10 +23,10 @@
   <table class="data-table">
     <thead>
       <tr>
-        <th>Customer</th>
-        <th>Product</th>
-        <th>Delivery</th>
-        <th>Stage</th>
+        <th><a href="{{ sort_link('customer') }}" class="sort-link">Customer{% if sort == 'customer' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
+        <th><a href="{{ sort_link('product') }}" class="sort-link">Product{% if sort == 'product' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
+        <th><a href="{{ sort_link('delivery') }}" class="sort-link">Delivery{% if sort == 'delivery' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
+        <th><a href="{{ sort_link('stage') }}" class="sort-link">Stage{% if sort == 'stage' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
         <th></th>
       </tr>
     </thead>

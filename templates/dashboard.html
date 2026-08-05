@@ -1,15 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Dashboard</h1>
+<div class="page-header">
+  <h1>Dashboard</h1>
+</div>
+
+<div class="filter-tabs">
+  {% for key, label in periods.items() %}
+  <a href="{{ url_for('dashboard', period=key) }}" class="{{ 'active' if period == key }}">{{ label }}</a>
+  {% endfor %}
+</div>
 
 <div class="stats-grid">
   <div class="stat-card">
-    <span class="stat-label">Enquiries this month</span>
-    <span class="stat-value">{{ stats.total_this_month }}</span>
+    <span class="stat-label">Enquiries</span>
+    <span class="stat-value">{{ stats.total_enquiries }}</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Confirmed orders</span>
     <span class="stat-value">{{ stats.confirmed_count }}</span>
+    <span class="stat-sub">Rs. {{ stats.confirmed_value }} total</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Pending advance</span>
@@ -20,6 +29,11 @@
     <span class="stat-label">Pending balance</span>
     <span class="stat-value">{{ stats.pending_balance_count }}</span>
     <span class="stat-sub">Rs. {{ stats.pending_balance_amount }}</span>
+  </div>
+  <div class="stat-card {{ 'stat-card-alert' if stats.overdue_count }}">
+    <span class="stat-label">Overdue</span>
+    <span class="stat-value">{{ stats.overdue_count }}</span>
+    <span class="stat-sub">Rs. {{ stats.overdue_amount }}</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Conversion rate</span>
@@ -46,13 +60,15 @@
   {% endfor %}
 </div>
 {% else %}
-<p class="empty-state">No enquiries yet.</p>
+<p class="empty-state">No enquiries in this period.</p>
 {% endif %}
 
 <p class="muted small">
+  All figures on this page are for the selected period above, based on when each enquiry was created (India time).
   "Conversion rate" is confirmed orders divided by total enquiries.
   "Pending advance" is confirmed orders where advance hasn't been received yet.
   "Pending balance" is dispatched orders where balance hasn't been received yet.
+  "Overdue" is confirmed, unpaid orders past their delivery date.
   Enquiries not yet marked Confirmed aren't counted as orders anywhere on this page.
 </p>
 {% endblock %}

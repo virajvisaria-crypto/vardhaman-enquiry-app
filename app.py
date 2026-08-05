@@ -1,7 +1,8 @@
 import os
 import sqlite3
 import smtplib
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
 from functools import wraps
 from urllib.parse import quote as urlquote
@@ -11,6 +12,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def today_ist():
+    """Railway's server clock runs on UTC/US time by default, which is wrong
+    for an India-based business, use this everywhere instead of date.today()."""
+    return datetime.now(IST).date()
+
 
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "vardhaman.db"))
 
@@ -220,7 +230,7 @@ def admin_required(view):
 
 
 def now_str():
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +541,8 @@ NEXT_ACTION_LABEL = {
 @login_required
 def orders_page():
     show_completed = request.args.get("show_completed") == "1"
+    sort = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
     db = get_db()
     rows = db.execute(
         """SELECT e.*, o.confirmed, o.advance_received, o.dispatched, o.balance_received,
@@ -539,7 +551,7 @@ def orders_page():
            WHERE o.confirmed = 1"""
     ).fetchall()
 
-    today_str = date.today().isoformat()
+    today_str = today_ist().isoformat()
     items = []
     for r in rows:
         stage = _current_stage(r)
@@ -558,73 +570,144 @@ def orders_page():
             "next_label": NEXT_ACTION_LABEL[stage],
         })
 
-    # Active stages first (most in-need-of-action first), completed orders last;
-    # within a stage, earliest delivery date first so due-soonest floats to top.
     stage_rank = {"confirmed": 0, "advance": 1, "dispatched": 2, "balance": 3}
-    items.sort(key=lambda i: (stage_rank[i["stage"]], i["row"]["delivery_date"] or "9999-99-99"))
+    sort_keys = {
+        "customer": lambda i: (i["row"]["customer_name"] or "").lower(),
+        "product": lambda i: (i["row"]["product_category"] or "").lower(),
+        "delivery": lambda i: i["row"]["delivery_date"] or "9999-99-99",
+        "stage": lambda i: stage_rank[i["stage"]],
+    }
+    if sort in sort_keys:
+        items.sort(key=sort_keys[sort], reverse=(sort_dir == "desc"))
+    else:
+        # Default: active stages first, then earliest delivery date within a stage.
+        items.sort(key=lambda i: (stage_rank[i["stage"]], i["row"]["delivery_date"] or "9999-99-99"))
 
-    return render_template("orders.html", items=items, show_completed=show_completed)
+    def sort_link(col):
+        next_dir = "desc" if sort == col and sort_dir == "asc" else "asc"
+        return url_for("orders_page", show_completed=1 if show_completed else None, sort=col, dir=next_dir)
+
+    return render_template(
+        "orders.html", items=items, show_completed=show_completed,
+        sort=sort, sort_dir=sort_dir, sort_link=sort_link,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 
+PERIODS = {
+    "today": "Today",
+    "week": "Last 7 days",
+    "month": "This month",
+    "year": "This year",
+    "all": "All time",
+}
+
+
+def _period_range(period, today):
+    if period == "today":
+        return today, today
+    if period == "week":
+        return today - timedelta(days=6), today
+    if period == "month":
+        return today.replace(day=1), today
+    if period == "year":
+        return today.replace(month=1, day=1), today
+    return None, None  # "all"
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
     db = get_db()
-    month_prefix = date.today().strftime("%Y-%m")
+    period = request.args.get("period", "month")
+    if period not in PERIODS:
+        period = "month"
+    today = today_ist()
+    date_from, date_to = _period_range(period, today)
 
-    total_this_month = db.execute(
-        "SELECT COUNT(*) c FROM enquiries WHERE created_at LIKE ?", (f"{month_prefix}%",)
+    if date_from:
+        date_clause = "WHERE date(e.created_at) BETWEEN ? AND ?"
+        date_params = (date_from.isoformat(), date_to.isoformat())
+    else:
+        date_clause = ""
+        date_params = ()
+
+    total_enquiries = db.execute(
+        f"SELECT COUNT(*) c FROM enquiries e {date_clause}", date_params
     ).fetchone()["c"]
-
-    total_enquiries = db.execute("SELECT COUNT(*) c FROM enquiries").fetchone()["c"]
 
     confirmed_count = db.execute(
-        "SELECT COUNT(*) c FROM orders WHERE confirmed = 1"
+        f"""SELECT COUNT(*) c FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1""",
+        date_params,
     ).fetchone()["c"]
 
+    confirmed_value = db.execute(
+        f"""SELECT COALESCE(SUM(e.rate * e.quantity), 0) v FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1""",
+        date_params,
+    ).fetchone()["v"]
+
     pending_advance = db.execute(
-        """SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
-           FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-           WHERE o.confirmed = 1 AND o.advance_received = 0"""
+        f"""SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
+            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1 AND o.advance_received = 0""",
+        date_params,
     ).fetchone()
 
     pending_balance = db.execute(
-        """SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
-           FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-           WHERE o.dispatched = 1 AND o.balance_received = 0"""
+        f"""SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
+            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} o.dispatched = 1 AND o.balance_received = 0""",
+        date_params,
     ).fetchone()
+
+    overdue_rows = db.execute(
+        f"""SELECT e.rate, e.quantity FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1 AND o.balance_received = 0
+            AND e.delivery_date IS NOT NULL AND e.delivery_date != '' AND e.delivery_date < ?""",
+        date_params + (today.isoformat(),),
+    ).fetchall()
+    overdue_count = len(overdue_rows)
+    overdue_amount = round(sum((r["rate"] or 0) * (r["quantity"] or 1) for r in overdue_rows), 2)
 
     conversion_rate = 0
     if total_enquiries:
         conversion_rate = round(100 * confirmed_count / total_enquiries, 1)
 
     avg_row = db.execute(
-        "SELECT AVG(rate * quantity) a FROM enquiries WHERE rate IS NOT NULL"
+        f"SELECT AVG(e.rate * e.quantity) a FROM enquiries e {date_clause}{' AND' if date_clause else 'WHERE'} e.rate IS NOT NULL",
+        date_params,
     ).fetchone()
     avg_quote_value = round(avg_row["a"], 2) if avg_row["a"] else 0
 
     by_category = db.execute(
-        """SELECT COALESCE(NULLIF(TRIM(product_category), ''), 'Uncategorized') cat, COUNT(*) c
-           FROM enquiries GROUP BY cat ORDER BY c DESC"""
+        f"""SELECT COALESCE(NULLIF(TRIM(e.product_category), ''), 'Uncategorized') cat, COUNT(*) c
+            FROM enquiries e {date_clause} GROUP BY cat ORDER BY c DESC""",
+        date_params,
     ).fetchall()
     max_cat = max([r["c"] for r in by_category], default=1)
 
     stats = {
-        "total_this_month": total_this_month,
         "total_enquiries": total_enquiries,
         "confirmed_count": confirmed_count,
+        "confirmed_value": round(confirmed_value, 2),
         "pending_advance_count": pending_advance["c"],
         "pending_advance_amount": round(pending_advance["amt"], 2),
         "pending_balance_count": pending_balance["c"],
         "pending_balance_amount": round(pending_balance["amt"], 2),
+        "overdue_count": overdue_count,
+        "overdue_amount": overdue_amount,
         "conversion_rate": conversion_rate,
         "avg_quote_value": avg_quote_value,
     }
-    return render_template("dashboard.html", stats=stats, by_category=by_category, max_cat=max_cat)
+    return render_template(
+        "dashboard.html", stats=stats, by_category=by_category, max_cat=max_cat,
+        period=period, periods=PERIODS,
+    )
 
 
 # ---------------------------------------------------------------------------
