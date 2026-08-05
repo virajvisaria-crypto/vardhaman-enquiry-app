@@ -2,18 +2,20 @@
 {% block content %}
 <div class="page-header">
   <h1>Orders</h1>
-</div>
-
-<div class="filter-tabs">
-  <a href="{{ url_for('orders_page', tab='confirmed') }}" class="{{ 'active' if tab == 'confirmed' }}">Confirmed</a>
-  <a href="{{ url_for('orders_page', tab='advance') }}" class="{{ 'active' if tab == 'advance' }}">Advance</a>
-  <a href="{{ url_for('orders_page', tab='dispatched') }}" class="{{ 'active' if tab == 'dispatched' }}">Dispatched</a>
-  <a href="{{ url_for('orders_page', tab='balance') }}" class="{{ 'active' if tab == 'balance' }}">Balance</a>
+  {% if show_completed %}
+  <a href="{{ url_for('orders_page') }}" class="btn">Hide completed</a>
+  {% else %}
+  <a href="{{ url_for('orders_page', show_completed=1) }}" class="btn">Show completed too</a>
+  {% endif %}
 </div>
 
 <p class="muted small">
-  Each tab shows orders currently sitting at that stage, waiting to move to the next one.
-  Balance shows completed orders. Enquiries only appear here once marked Confirmed on their detail page.
+  {% if show_completed %}
+  All confirmed orders, including completed ones, earliest-stage and soonest-due first.
+  {% else %}
+  Active orders only, earliest-stage and soonest-due first. Completed orders are hidden.
+  {% endif %}
+  Enquiries only appear here once marked Confirmed on their detail page.
 </p>
 
 {% if items %}
@@ -24,6 +26,7 @@
         <th>Customer</th>
         <th>Product</th>
         <th>Delivery</th>
+        <th>Stage</th>
         <th></th>
       </tr>
     </thead>
@@ -36,14 +39,12 @@
         </td>
         <td>{{ e.product_category or '-' }}</td>
         <td>{{ e.delivery_date or '-' }}{% if item.overdue %} <span class="tag tag-overdue">overdue</span>{% endif %}</td>
+        <td><span class="tag tag-stage-{{ item.stage }}">{{ item.stage_label }}</span></td>
         <td class="partner-actions">
-          {% if next_label %}
+          {% if item.next_label %}
           <form method="POST" action="{{ url_for('enquiry_order_advance_stage', eid=e.id) }}" style="display:inline">
-            <input type="hidden" name="tab" value="{{ tab }}">
-            <button type="submit" class="btn btn-small btn-primary">{{ next_label }}</button>
+            <button type="submit" class="btn btn-small btn-primary">{{ item.next_label }}</button>
           </form>
-          {% else %}
-          <span class="tag tag-confirmed">completed</span>
           {% endif %}
           <a href="{{ url_for('enquiry_detail', eid=e.id) }}" class="btn btn-small">View</a>
         </td>
@@ -53,6 +54,6 @@
   </table>
 </div>
 {% else %}
-<p class="empty-state">Nothing at this stage right now.</p>
+<p class="empty-state">No confirmed orders yet.</p>
 {% endif %}
 {% endblock %}

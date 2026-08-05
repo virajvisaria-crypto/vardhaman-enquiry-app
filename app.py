@@ -515,46 +515,55 @@ def enquiry_order_advance_stage(eid):
     elif stage == "dispatched":
         db.execute("UPDATE orders SET balance_received=1, balance_received_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
     db.commit()
-    tab = request.form.get("tab", "confirmed")
-    return redirect(url_for("orders_page", tab=tab))
+    return redirect(url_for("orders_page"))
+
+
+STAGE_LABEL = {"confirmed": "Confirmed", "advance": "Advance", "dispatched": "Dispatched", "balance": "Balance"}
+NEXT_ACTION_LABEL = {
+    "confirmed": "Mark advance received",
+    "advance": "Mark dispatched",
+    "dispatched": "Mark balance received",
+    "balance": None,
+}
 
 
 @app.route("/orders")
 @login_required
 def orders_page():
-    tab = request.args.get("tab", "confirmed")
-    if tab not in STAGE_ORDER:
-        tab = "confirmed"
+    show_completed = request.args.get("show_completed") == "1"
     db = get_db()
     rows = db.execute(
         """SELECT e.*, o.confirmed, o.advance_received, o.dispatched, o.balance_received,
                   o.confirmed_date, o.advance_received_date, o.dispatched_date, o.balance_received_date
            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-           WHERE o.confirmed = 1
-           ORDER BY e.created_at DESC"""
+           WHERE o.confirmed = 1"""
     ).fetchall()
 
     today_str = date.today().isoformat()
     items = []
     for r in rows:
         stage = _current_stage(r)
-        if stage != tab:
+        if stage == "balance" and not show_completed:
             continue
         overdue = (
             not r["balance_received"]
             and r["delivery_date"]
             and r["delivery_date"] < today_str
         )
-        items.append({"row": r, "overdue": overdue, "stage": stage})
+        items.append({
+            "row": r,
+            "overdue": overdue,
+            "stage": stage,
+            "stage_label": STAGE_LABEL[stage],
+            "next_label": NEXT_ACTION_LABEL[stage],
+        })
 
-    next_label = {
-        "confirmed": "Mark advance received",
-        "advance": "Mark dispatched",
-        "dispatched": "Mark balance received",
-        "balance": None,
-    }[tab]
+    # Active stages first (most in-need-of-action first), completed orders last;
+    # within a stage, earliest delivery date first so due-soonest floats to top.
+    stage_rank = {"confirmed": 0, "advance": 1, "dispatched": 2, "balance": 3}
+    items.sort(key=lambda i: (stage_rank[i["stage"]], i["row"]["delivery_date"] or "9999-99-99"))
 
-    return render_template("orders.html", items=items, tab=tab, next_label=next_label)
+    return render_template("orders.html", items=items, show_completed=show_completed)
 
 
 # ---------------------------------------------------------------------------
