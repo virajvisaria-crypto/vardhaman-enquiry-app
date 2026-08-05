@@ -124,6 +124,28 @@ def init_db():
         db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
         db.commit()
 
+    order_cols = _column_names(db, "orders")
+    if "confirmed" not in order_cols:
+        db.execute("ALTER TABLE orders ADD COLUMN confirmed INTEGER DEFAULT 0")
+        db.execute("ALTER TABLE orders ADD COLUMN confirmed_date TEXT")
+        db.execute("ALTER TABLE orders ADD COLUMN dispatched INTEGER DEFAULT 0")
+        db.execute("ALTER TABLE orders ADD COLUMN dispatched_date TEXT")
+        db.commit()
+        # Backfill: any order that already had advance or balance marked received
+        # must logically have already been "confirmed", and anything with balance
+        # received must have already been dispatched. Without this, every order
+        # already in progress would silently vanish from the Orders page the
+        # moment this deploys, since it now only shows confirmed orders.
+        db.execute(
+            "UPDATE orders SET confirmed = 1, confirmed_date = COALESCE(confirmed_date, advance_received_date, created_at) "
+            "WHERE advance_received = 1 OR balance_received = 1"
+        )
+        db.execute(
+            "UPDATE orders SET dispatched = 1, dispatched_date = COALESCE(dispatched_date, balance_received_date) "
+            "WHERE balance_received = 1"
+        )
+        db.commit()
+
     # make sure exactly one admin exists (earliest-created user, if none flagged)
     admin_row = db.execute("SELECT id FROM users WHERE is_admin = 1 LIMIT 1").fetchone()
     if admin_row is None:
@@ -296,14 +318,15 @@ def index():
 def enquiries():
     q = request.args.get("q", "").strip()
     db = get_db()
+    base = """SELECT e.*, o.confirmed
+              FROM enquiries e LEFT JOIN orders o ON o.enquiry_id = e.id"""
     if q:
         rows = db.execute(
-            "SELECT * FROM enquiries WHERE customer_name LIKE ? OR company_name LIKE ? "
-            "ORDER BY created_at DESC",
+            base + " WHERE e.customer_name LIKE ? OR e.company_name LIKE ? ORDER BY e.created_at DESC",
             (f"%{q}%", f"%{q}%"),
         ).fetchall()
     else:
-        rows = db.execute("SELECT * FROM enquiries ORDER BY created_at DESC").fetchall()
+        rows = db.execute(base + " ORDER BY e.created_at DESC").fetchall()
     return render_template("list.html", enquiries=rows, q=q)
 
 
@@ -425,15 +448,33 @@ def _get_or_create_order(db, eid):
 def enquiry_order_update(eid):
     db = get_db()
     order = _get_or_create_order(db, eid)
+    confirmed = 1 if request.form.get("confirmed") else 0
     advance_received = 1 if request.form.get("advance_received") else 0
+    dispatched = 1 if request.form.get("dispatched") else 0
     balance_received = 1 if request.form.get("balance_received") else 0
+
+    # Forward cascade: marking a later stage implies every earlier stage happened
+    # too, even if someone forgot to tick the earlier boxes. Keeps the pipeline
+    # state internally consistent (e.g. never dispatched=1 with confirmed=0).
+    if balance_received:
+        dispatched = 1
+    if dispatched:
+        advance_received = 1
+    if advance_received:
+        confirmed = 1
+
     ts = now_str()
     db.execute(
-        """UPDATE orders SET advance_received=?, advance_received_date=?,
-           balance_received=?, balance_received_date=?, updated_at=? WHERE id=?""",
+        """UPDATE orders SET confirmed=?, confirmed_date=?, advance_received=?, advance_received_date=?,
+           dispatched=?, dispatched_date=?, balance_received=?, balance_received_date=?, updated_at=?
+           WHERE id=?""",
         (
+            confirmed,
+            ts if confirmed and not order["confirmed"] else order["confirmed_date"],
             advance_received,
             ts if advance_received and not order["advance_received"] else order["advance_received_date"],
+            dispatched,
+            ts if dispatched and not order["dispatched"] else order["dispatched_date"],
             balance_received,
             ts if balance_received and not order["balance_received"] else order["balance_received_date"],
             ts,
@@ -441,42 +482,79 @@ def enquiry_order_update(eid):
         ),
     )
     db.commit()
-    flash("Payment status updated.", "success")
+    flash("Order status updated.", "success")
     return redirect(url_for("enquiry_detail", eid=eid))
+
+
+STAGE_ORDER = ["confirmed", "advance", "dispatched", "balance"]
+
+
+def _current_stage(order):
+    """Which pipeline stage an already-confirmed order is currently sitting at,
+    waiting to move to the next one."""
+    if not order["balance_received"]:
+        if not order["dispatched"]:
+            if not order["advance_received"]:
+                return "confirmed"
+            return "advance"
+        return "dispatched"
+    return "balance"
+
+
+@app.route("/enquiry/<int:eid>/order/advance-stage", methods=["POST"])
+@login_required
+def enquiry_order_advance_stage(eid):
+    db = get_db()
+    order = _get_or_create_order(db, eid)
+    stage = _current_stage(order)
+    ts = now_str()
+    if stage == "confirmed":
+        db.execute("UPDATE orders SET advance_received=1, advance_received_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
+    elif stage == "advance":
+        db.execute("UPDATE orders SET dispatched=1, dispatched_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
+    elif stage == "dispatched":
+        db.execute("UPDATE orders SET balance_received=1, balance_received_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
+    db.commit()
+    tab = request.form.get("tab", "confirmed")
+    return redirect(url_for("orders_page", tab=tab))
 
 
 @app.route("/orders")
 @login_required
 def orders_page():
-    status = request.args.get("status", "all")
+    tab = request.args.get("tab", "confirmed")
+    if tab not in STAGE_ORDER:
+        tab = "confirmed"
     db = get_db()
     rows = db.execute(
-        """SELECT e.*, o.advance_received, o.balance_received, o.advance_received_date, o.balance_received_date
-           FROM enquiries e LEFT JOIN orders o ON o.enquiry_id = e.id
+        """SELECT e.*, o.confirmed, o.advance_received, o.dispatched, o.balance_received,
+                  o.confirmed_date, o.advance_received_date, o.dispatched_date, o.balance_received_date
+           FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
+           WHERE o.confirmed = 1
            ORDER BY e.created_at DESC"""
     ).fetchall()
 
     today_str = date.today().isoformat()
-    filtered = []
+    items = []
     for r in rows:
-        advance_received = r["advance_received"] or 0
-        balance_received = r["balance_received"] or 0
+        stage = _current_stage(r)
+        if stage != tab:
+            continue
         overdue = (
-            not balance_received
+            not r["balance_received"]
             and r["delivery_date"]
             and r["delivery_date"] < today_str
         )
-        if status == "pending_advance" and advance_received:
-            continue
-        if status == "pending_balance" and (not advance_received or balance_received):
-            continue
-        if status == "fully_paid" and not (advance_received and balance_received):
-            continue
-        if status == "overdue" and not overdue:
-            continue
-        filtered.append({"row": r, "overdue": overdue})
+        items.append({"row": r, "overdue": overdue, "stage": stage})
 
-    return render_template("orders.html", items=filtered, status=status)
+    next_label = {
+        "confirmed": "Mark advance received",
+        "advance": "Mark dispatched",
+        "dispatched": "Mark balance received",
+        "balance": None,
+    }[tab]
+
+    return render_template("orders.html", items=items, tab=tab, next_label=next_label)
 
 
 # ---------------------------------------------------------------------------
@@ -495,30 +573,25 @@ def dashboard():
 
     total_enquiries = db.execute("SELECT COUNT(*) c FROM enquiries").fetchone()["c"]
 
+    confirmed_count = db.execute(
+        "SELECT COUNT(*) c FROM orders WHERE confirmed = 1"
+    ).fetchone()["c"]
+
     pending_advance = db.execute(
         """SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-           WHERE o.advance_received = 0"""
-    ).fetchone()
-    # enquiries with no order row yet also count as pending advance
-    no_order_count = db.execute(
-        """SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt FROM enquiries e
-           WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.enquiry_id = e.id)"""
+           WHERE o.confirmed = 1 AND o.advance_received = 0"""
     ).fetchone()
 
     pending_balance = db.execute(
         """SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-           WHERE o.advance_received = 1 AND o.balance_received = 0"""
+           WHERE o.dispatched = 1 AND o.balance_received = 0"""
     ).fetchone()
-
-    fully_paid_count = db.execute(
-        """SELECT COUNT(*) c FROM orders WHERE advance_received = 1 AND balance_received = 1"""
-    ).fetchone()["c"]
 
     conversion_rate = 0
     if total_enquiries:
-        conversion_rate = round(100 * fully_paid_count / total_enquiries, 1)
+        conversion_rate = round(100 * confirmed_count / total_enquiries, 1)
 
     avg_row = db.execute(
         "SELECT AVG(rate * quantity) a FROM enquiries WHERE rate IS NOT NULL"
@@ -534,8 +607,9 @@ def dashboard():
     stats = {
         "total_this_month": total_this_month,
         "total_enquiries": total_enquiries,
-        "pending_advance_count": pending_advance["c"] + no_order_count["c"],
-        "pending_advance_amount": round(pending_advance["amt"] + no_order_count["amt"], 2),
+        "confirmed_count": confirmed_count,
+        "pending_advance_count": pending_advance["c"],
+        "pending_advance_amount": round(pending_advance["amt"], 2),
         "pending_balance_count": pending_balance["c"],
         "pending_balance_amount": round(pending_balance["amt"], 2),
         "conversion_rate": conversion_rate,

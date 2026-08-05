@@ -5,12 +5,16 @@
 </div>
 
 <div class="filter-tabs">
-  <a href="{{ url_for('orders_page', status='all') }}" class="{{ 'active' if status == 'all' }}">All</a>
-  <a href="{{ url_for('orders_page', status='pending_advance') }}" class="{{ 'active' if status == 'pending_advance' }}">Pending advance</a>
-  <a href="{{ url_for('orders_page', status='pending_balance') }}" class="{{ 'active' if status == 'pending_balance' }}">Pending balance</a>
-  <a href="{{ url_for('orders_page', status='fully_paid') }}" class="{{ 'active' if status == 'fully_paid' }}">Fully paid</a>
-  <a href="{{ url_for('orders_page', status='overdue') }}" class="{{ 'active' if status == 'overdue' }}">Overdue</a>
+  <a href="{{ url_for('orders_page', tab='confirmed') }}" class="{{ 'active' if tab == 'confirmed' }}">Confirmed</a>
+  <a href="{{ url_for('orders_page', tab='advance') }}" class="{{ 'active' if tab == 'advance' }}">Advance</a>
+  <a href="{{ url_for('orders_page', tab='dispatched') }}" class="{{ 'active' if tab == 'dispatched' }}">Dispatched</a>
+  <a href="{{ url_for('orders_page', tab='balance') }}" class="{{ 'active' if tab == 'balance' }}">Balance</a>
 </div>
+
+<p class="muted small">
+  Each tab shows orders currently sitting at that stage, waiting to move to the next one.
+  Balance shows completed orders. Enquiries only appear here once marked Confirmed on their detail page.
+</p>
 
 {% if items %}
 <div class="table-wrap">
@@ -20,8 +24,6 @@
         <th>Customer</th>
         <th>Product</th>
         <th>Delivery</th>
-        <th>Advance</th>
-        <th>Balance</th>
         <th></th>
       </tr>
     </thead>
@@ -29,18 +31,28 @@
       {% for item in items %}
       {% set e = item.row %}
       <tr class="{{ 'row-overdue' if item.overdue }}">
-        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a></td>
+        <td>
+          <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>{% if e.company_name %} <span class="muted small">({{ e.company_name }})</span>{% endif %}
+        </td>
         <td>{{ e.product_category or '-' }}</td>
         <td>{{ e.delivery_date or '-' }}{% if item.overdue %} <span class="tag tag-overdue">overdue</span>{% endif %}</td>
-        <td>{{ '✅' if e.advance_received else '—' }}</td>
-        <td>{{ '✅' if e.balance_received else '—' }}</td>
-        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">View</a></td>
+        <td class="partner-actions">
+          {% if next_label %}
+          <form method="POST" action="{{ url_for('enquiry_order_advance_stage', eid=e.id) }}" style="display:inline">
+            <input type="hidden" name="tab" value="{{ tab }}">
+            <button type="submit" class="btn btn-small btn-primary">{{ next_label }}</button>
+          </form>
+          {% else %}
+          <span class="tag tag-confirmed">completed</span>
+          {% endif %}
+          <a href="{{ url_for('enquiry_detail', eid=e.id) }}" class="btn btn-small">View</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 {% else %}
-<p class="empty-state">Nothing matches this filter.</p>
+<p class="empty-state">Nothing at this stage right now.</p>
 {% endif %}
 {% endblock %}

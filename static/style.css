@@ -201,6 +201,7 @@ input:focus, textarea:focus, select:focus {
 
 .tag { font-size: 0.72rem; padding: 2px 6px; border-radius: 3px; }
 .tag-overdue { background: var(--danger); color: #fff; }
+.tag-confirmed { background: var(--success); color: #fff; }
 
 .empty-state { color: var(--muted); font-style: italic; padding: 24px 0; }
 

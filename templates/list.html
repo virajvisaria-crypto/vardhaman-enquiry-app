@@ -16,7 +16,6 @@
     <thead>
       <tr>
         <th>Customer</th>
-        <th>Company</th>
         <th>Product</th>
         <th>Partner</th>
         <th>Delivery</th>
@@ -26,8 +25,10 @@
     <tbody>
       {% for e in enquiries %}
       <tr>
-        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a></td>
-        <td>{{ e.company_name or '-' }}</td>
+        <td>
+          <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>{% if e.company_name %} <span class="muted small">({{ e.company_name }})</span>{% endif %}
+          {% if e.confirmed %}<span class="tag tag-confirmed">order</span>{% endif %}
+        </td>
         <td>{{ e.product_category or '-' }}</td>
         <td>{{ e.partner_name }}</td>
         <td>{{ e.delivery_date or '-' }}</td>

@@ -8,6 +8,10 @@
     <span class="stat-value">{{ stats.total_this_month }}</span>
   </div>
   <div class="stat-card">
+    <span class="stat-label">Confirmed orders</span>
+    <span class="stat-value">{{ stats.confirmed_count }}</span>
+  </div>
+  <div class="stat-card">
     <span class="stat-label">Pending advance</span>
     <span class="stat-value">{{ stats.pending_advance_count }}</span>
     <span class="stat-sub">Rs. {{ stats.pending_advance_amount }}</span>
@@ -20,7 +24,7 @@
   <div class="stat-card">
     <span class="stat-label">Conversion rate</span>
     <span class="stat-value">{{ stats.conversion_rate }}%</span>
-    <span class="stat-sub">fully paid / total enquiries</span>
+    <span class="stat-sub">confirmed orders / total enquiries</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Average quote value</span>
@@ -46,7 +50,9 @@
 {% endif %}
 
 <p class="muted small">
-  "Conversion rate" here means enquiries where both advance and balance have been marked received.
-  "Pending advance" includes enquiries with no order record yet.
+  "Conversion rate" is confirmed orders divided by total enquiries.
+  "Pending advance" is confirmed orders where advance hasn't been received yet.
+  "Pending balance" is dispatched orders where balance hasn't been received yet.
+  Enquiries not yet marked Confirmed aren't counted as orders anywhere on this page.
 </p>
 {% endblock %}

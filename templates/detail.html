@@ -27,18 +27,29 @@
   <p>{{ enquiry.specs or '-' }}</p>
 </div>
 
-<h2>Payment status</h2>
+<h2>Order status</h2>
 <form method="POST" action="{{ url_for('enquiry_order_update', eid=enquiry.id) }}" class="order-form">
+  <label class="checkbox-row">
+    <input type="checkbox" name="confirmed" {{ 'checked' if order and order.confirmed }}>
+    Confirmed
+    {% if order and order.confirmed_date %}<span class="muted">({{ order.confirmed_date }})</span>{% endif %}
+  </label>
   <label class="checkbox-row">
     <input type="checkbox" name="advance_received" {{ 'checked' if order and order.advance_received }}>
     Advance received
     {% if order and order.advance_received_date %}<span class="muted">({{ order.advance_received_date }})</span>{% endif %}
   </label>
   <label class="checkbox-row">
+    <input type="checkbox" name="dispatched" {{ 'checked' if order and order.dispatched }}>
+    Dispatched
+    {% if order and order.dispatched_date %}<span class="muted">({{ order.dispatched_date }})</span>{% endif %}
+  </label>
+  <label class="checkbox-row">
     <input type="checkbox" name="balance_received" {{ 'checked' if order and order.balance_received }}>
     Balance received
     {% if order and order.balance_received_date %}<span class="muted">({{ order.balance_received_date }})</span>{% endif %}
   </label>
+  <p class="muted small">Ticking a later stage automatically fills in the earlier ones, e.g. marking Dispatched also marks Confirmed and Advance received.</p>
   <button type="submit" class="btn btn-primary">Update</button>
 </form>
 {% endblock %}

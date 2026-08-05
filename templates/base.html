@@ -11,8 +11,8 @@
   <header class="topbar">
     <div class="brand">{{ settings.company_name }}</div>
     <nav class="tabs">
-      <a href="{{ url_for('enquiries') }}" class="{{ 'active' if request.path.startswith('/enquiries') or request.path == '/' else '' }}">Enquiries</a>
       <a href="{{ url_for('enquiry_add') }}" class="{{ 'active' if request.path == url_for('enquiry_add') else '' }}">Add Enquiry</a>
+      <a href="{{ url_for('enquiries') }}" class="{{ 'active' if request.path.startswith('/enquiries') or request.path == '/' else '' }}">Enquiries</a>
       <a href="{{ url_for('orders_page') }}" class="{{ 'active' if request.path.startswith('/orders') else '' }}">Orders</a>
       <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.path.startswith('/dashboard') else '' }}">Dashboard</a>
       {% if current_user.is_admin %}
