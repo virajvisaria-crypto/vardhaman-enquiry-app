@@ -5,6 +5,9 @@
   <label>Customer name *
     <input type="text" name="customer_name" required value="{{ enquiry.customer_name if enquiry else '' }}">
   </label>
+  <label>Enquiry date
+    <input type="date" name="enquiry_date" value="{{ enquiry.enquiry_date if enquiry else today }}">
+  </label>
   <label>Phone *
     <input type="tel" name="phone" required value="{{ enquiry.phone if enquiry else '' }}">
   </label>
