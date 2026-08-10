@@ -152,6 +152,18 @@ def init_db():
         db.execute("ALTER TABLE enquiries ADD COLUMN quantity REAL DEFAULT 1")
         db.commit()
 
+    if "enquiry_date" not in enquiry_cols:
+        db.execute("ALTER TABLE enquiries ADD COLUMN enquiry_date TEXT")
+        # Existing enquiries get today's date as a clean starting point, not the
+        # old created_at timestamp, since that may not reflect the real enquiry
+        # date anyway (some of this data went through an earlier reset). Partners
+        # can correct individual enquiries by editing them.
+        db.execute(
+            "UPDATE enquiries SET enquiry_date = ? WHERE enquiry_date IS NULL",
+            (today_ist().isoformat(),),
+        )
+        db.commit()
+
     if "is_active" not in user_cols:
         db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
         db.commit()
@@ -388,11 +400,11 @@ def enquiries():
     db = get_db()
     if q:
         rows = db.execute(
-            "SELECT * FROM enquiries WHERE customer_name LIKE ? OR company_name LIKE ? ORDER BY created_at DESC",
+            "SELECT * FROM enquiries WHERE customer_name LIKE ? OR company_name LIKE ? ORDER BY enquiry_date DESC, created_at DESC",
             (f"%{q}%", f"%{q}%"),
         ).fetchall()
     else:
-        rows = db.execute("SELECT * FROM enquiries ORDER BY created_at DESC").fetchall()
+        rows = db.execute("SELECT * FROM enquiries ORDER BY enquiry_date DESC, created_at DESC").fetchall()
 
     enquiries_with_items = []
     for e in rows:
@@ -441,15 +453,16 @@ def enquiry_add():
         ts = now_str()
         cur = db.execute(
             """INSERT INTO enquiries
-               (customer_name, company_name, phone, email, delivery_date,
+               (customer_name, company_name, phone, email, delivery_date, enquiry_date,
                 partner_name, user_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 request.form.get("customer_name", "").strip(),
                 request.form.get("company_name", "").strip(),
                 request.form.get("phone", "").strip(),
                 request.form.get("email", "").strip(),
                 request.form.get("delivery_date", "").strip(),
+                request.form.get("enquiry_date", "").strip() or today_ist().isoformat(),
                 request.form.get("partner_name", "").strip(),
                 session["user_id"],
                 ts,
@@ -478,7 +491,7 @@ def enquiry_add():
         db.commit()
         flash("Enquiry added.", "success")
         return redirect(url_for("enquiries"))
-    return render_template("form.html", enquiry=None, items=[])
+    return render_template("form.html", enquiry=None, items=[], today=today_ist().isoformat())
 
 
 @app.route("/enquiry/<int:eid>")
@@ -505,13 +518,14 @@ def enquiry_edit(eid):
     if request.method == "POST":
         db.execute(
             """UPDATE enquiries SET customer_name=?, company_name=?, phone=?, email=?,
-               delivery_date=?, partner_name=?, updated_at=? WHERE id=?""",
+               delivery_date=?, enquiry_date=?, partner_name=?, updated_at=? WHERE id=?""",
             (
                 request.form.get("customer_name", "").strip(),
                 request.form.get("company_name", "").strip(),
                 request.form.get("phone", "").strip(),
                 request.form.get("email", "").strip(),
                 request.form.get("delivery_date", "").strip(),
+                request.form.get("enquiry_date", "").strip() or enquiry["enquiry_date"] or today_ist().isoformat(),
                 request.form.get("partner_name", "").strip(),
                 now_str(),
                 eid,
@@ -541,7 +555,7 @@ def enquiry_edit(eid):
         flash("Enquiry updated.", "success")
         return redirect(url_for("enquiry_detail", eid=eid))
     items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ? ORDER BY id", (eid,)).fetchall()
-    return render_template("form.html", enquiry=enquiry, items=items)
+    return render_template("form.html", enquiry=enquiry, items=items, today=today_ist().isoformat())
 
 
 @app.route("/enquiry/<int:eid>/delete", methods=["POST"])
@@ -773,7 +787,7 @@ def dashboard():
     date_from, date_to = _period_range(period, today)
 
     if date_from:
-        date_clause = "WHERE date(e.created_at) BETWEEN ? AND ?"
+        date_clause = "WHERE e.enquiry_date BETWEEN ? AND ?"
         date_params = (date_from.isoformat(), date_to.isoformat())
     else:
         date_clause = ""
