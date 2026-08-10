@@ -117,6 +117,28 @@ def init_db():
             value TEXT
         )"""
     )
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS enquiry_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            enquiry_id INTEGER NOT NULL,
+            product_category TEXT,
+            specs TEXT,
+            rate REAL,
+            rate_unit TEXT,
+            quantity REAL DEFAULT 1,
+            confirmed INTEGER DEFAULT 0,
+            confirmed_date TEXT,
+            advance_received INTEGER DEFAULT 0,
+            advance_received_date TEXT,
+            dispatched INTEGER DEFAULT 0,
+            dispatched_date TEXT,
+            balance_received INTEGER DEFAULT 0,
+            balance_received_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (enquiry_id) REFERENCES enquiries (id)
+        )"""
+    )
     db.commit()
 
     # --- migrations: add columns that older deployments won't have yet ---
@@ -154,6 +176,42 @@ def init_db():
             "UPDATE orders SET dispatched = 1, dispatched_date = COALESCE(dispatched_date, balance_received_date) "
             "WHERE balance_received = 1"
         )
+        db.commit()
+
+    # One-time migration to multi-product line items. Guarded by an explicit
+    # flag (not "table is empty") since the table could legitimately become
+    # empty later if someone deletes items, and emptiness would wrongly
+    # re-trigger this and duplicate everything.
+    already_migrated = db.execute(
+        "SELECT value FROM settings WHERE key = '_migrated_items_v1'"
+    ).fetchone()
+    if already_migrated is None:
+        old_enquiries = db.execute("SELECT * FROM enquiries").fetchall()
+        for e in old_enquiries:
+            old_order = db.execute(
+                "SELECT * FROM orders WHERE enquiry_id = ?", (e["id"],)
+            ).fetchone()
+            db.execute(
+                """INSERT INTO enquiry_items
+                   (enquiry_id, product_category, specs, rate, rate_unit, quantity,
+                    confirmed, confirmed_date, advance_received, advance_received_date,
+                    dispatched, dispatched_date, balance_received, balance_received_date,
+                    created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    e["id"], e["product_category"], e["specs"], e["rate"], e["rate_unit"], e["quantity"] or 1,
+                    (old_order["confirmed"] if old_order else 0) or 0,
+                    old_order["confirmed_date"] if old_order else None,
+                    (old_order["advance_received"] if old_order else 0) or 0,
+                    old_order["advance_received_date"] if old_order else None,
+                    (old_order["dispatched"] if old_order else 0) or 0,
+                    old_order["dispatched_date"] if old_order else None,
+                    (old_order["balance_received"] if old_order else 0) or 0,
+                    old_order["balance_received_date"] if old_order else None,
+                    e["created_at"], e["updated_at"],
+                ),
+            )
+        db.execute("INSERT INTO settings (key, value) VALUES ('_migrated_items_v1', '1')")
         db.commit()
 
     # make sure exactly one admin exists (earliest-created user, if none flagged)
@@ -328,16 +386,51 @@ def index():
 def enquiries():
     q = request.args.get("q", "").strip()
     db = get_db()
-    base = """SELECT e.*, o.confirmed
-              FROM enquiries e LEFT JOIN orders o ON o.enquiry_id = e.id"""
     if q:
         rows = db.execute(
-            base + " WHERE e.customer_name LIKE ? OR e.company_name LIKE ? ORDER BY e.created_at DESC",
+            "SELECT * FROM enquiries WHERE customer_name LIKE ? OR company_name LIKE ? ORDER BY created_at DESC",
             (f"%{q}%", f"%{q}%"),
         ).fetchall()
     else:
-        rows = db.execute(base + " ORDER BY e.created_at DESC").fetchall()
-    return render_template("list.html", enquiries=rows, q=q)
+        rows = db.execute("SELECT * FROM enquiries ORDER BY created_at DESC").fetchall()
+
+    enquiries_with_items = []
+    for e in rows:
+        items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ?", (e["id"],)).fetchall()
+        categories = [i["product_category"] for i in items if i["product_category"]]
+        if len(categories) > 2:
+            product_summary = f"{categories[0]}, {categories[1]} +{len(categories) - 2} more"
+        else:
+            product_summary = ", ".join(categories) if categories else "-"
+        confirmed = any(i["confirmed"] for i in items)
+        enquiries_with_items.append({"e": e, "product_summary": product_summary, "confirmed": confirmed})
+
+    return render_template("list.html", enquiries=enquiries_with_items, q=q)
+
+
+MAX_ITEMS = 10
+
+
+def _parse_item_slots(form):
+    """Read item_1_* .. item_10_* fields from a submitted form. A slot counts
+    as filled if it has a product category or a rate, empty trailing slots
+    (from the "+ Add another product" UI) are simply ignored."""
+    slots = []
+    for n in range(1, MAX_ITEMS + 1):
+        category = form.get(f"item_{n}_product_category", "").strip()
+        rate = form.get(f"item_{n}_rate", "").strip()
+        if not category and not rate:
+            continue
+        slots.append({
+            "item_id": form.get(f"item_{n}_id", "").strip(),
+            "product_category": category,
+            "specs": form.get(f"item_{n}_specs", "").strip(),
+            "rate": rate or None,
+            "rate_unit": form.get(f"item_{n}_rate_unit", "").strip(),
+            "quantity": form.get(f"item_{n}_quantity", "").strip() or 1,
+            "delete": form.get(f"item_{n}_delete") == "1",
+        })
+    return slots
 
 
 @app.route("/enquiry/add", methods=["GET", "POST"])
@@ -346,32 +439,46 @@ def enquiry_add():
     if request.method == "POST":
         db = get_db()
         ts = now_str()
-        db.execute(
+        cur = db.execute(
             """INSERT INTO enquiries
-               (customer_name, company_name, phone, email, product_category, specs,
-                delivery_date, rate, rate_unit, quantity, partner_name, user_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (customer_name, company_name, phone, email, delivery_date,
+                partner_name, user_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 request.form.get("customer_name", "").strip(),
                 request.form.get("company_name", "").strip(),
                 request.form.get("phone", "").strip(),
                 request.form.get("email", "").strip(),
-                request.form.get("product_category", "").strip(),
-                request.form.get("specs", "").strip(),
                 request.form.get("delivery_date", "").strip(),
-                request.form.get("rate") or None,
-                request.form.get("rate_unit", "").strip(),
-                request.form.get("quantity") or 1,
                 request.form.get("partner_name", "").strip(),
                 session["user_id"],
                 ts,
                 ts,
             ),
         )
+        eid = cur.lastrowid
+
+        items = _parse_item_slots(request.form)
+        if not items:
+            # Nobody filled in even one product, keep the old single-field
+            # behaviour so this still works exactly like before for the
+            # common case of one product.
+            items = [{
+                "product_category": "", "specs": "", "rate": None,
+                "rate_unit": "", "quantity": 1,
+            }]
+        for item in items:
+            db.execute(
+                """INSERT INTO enquiry_items
+                   (enquiry_id, product_category, specs, rate, rate_unit, quantity, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (eid, item["product_category"], item["specs"], item["rate"],
+                 item["rate_unit"], item["quantity"], ts, ts),
+            )
         db.commit()
         flash("Enquiry added.", "success")
         return redirect(url_for("enquiries"))
-    return render_template("form.html", enquiry=None)
+    return render_template("form.html", enquiry=None, items=[])
 
 
 @app.route("/enquiry/<int:eid>")
@@ -382,8 +489,9 @@ def enquiry_detail(eid):
     if enquiry is None:
         flash("Enquiry not found.", "error")
         return redirect(url_for("enquiries"))
-    order = db.execute("SELECT * FROM orders WHERE enquiry_id = ?", (eid,)).fetchone()
-    return render_template("detail.html", enquiry=enquiry, order=order)
+    items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ? ORDER BY id", (eid,)).fetchall()
+    items_with_stage = [{"item": i, "stage": _current_stage(i) if i["confirmed"] else None} for i in items]
+    return render_template("detail.html", enquiry=enquiry, items=items_with_stage)
 
 
 @app.route("/enquiry/<int:eid>/edit", methods=["GET", "POST"])
@@ -397,28 +505,43 @@ def enquiry_edit(eid):
     if request.method == "POST":
         db.execute(
             """UPDATE enquiries SET customer_name=?, company_name=?, phone=?, email=?,
-               product_category=?, specs=?, delivery_date=?, rate=?, rate_unit=?, quantity=?,
-               partner_name=?, updated_at=? WHERE id=?""",
+               delivery_date=?, partner_name=?, updated_at=? WHERE id=?""",
             (
                 request.form.get("customer_name", "").strip(),
                 request.form.get("company_name", "").strip(),
                 request.form.get("phone", "").strip(),
                 request.form.get("email", "").strip(),
-                request.form.get("product_category", "").strip(),
-                request.form.get("specs", "").strip(),
                 request.form.get("delivery_date", "").strip(),
-                request.form.get("rate") or None,
-                request.form.get("rate_unit", "").strip(),
-                request.form.get("quantity") or 1,
                 request.form.get("partner_name", "").strip(),
                 now_str(),
                 eid,
             ),
         )
+        ts = now_str()
+        for item in _parse_item_slots(request.form):
+            if item["item_id"]:
+                if item["delete"]:
+                    db.execute("DELETE FROM enquiry_items WHERE id = ? AND enquiry_id = ?", (item["item_id"], eid))
+                else:
+                    db.execute(
+                        """UPDATE enquiry_items SET product_category=?, specs=?, rate=?, rate_unit=?,
+                           quantity=?, updated_at=? WHERE id=? AND enquiry_id=?""",
+                        (item["product_category"], item["specs"], item["rate"], item["rate_unit"],
+                         item["quantity"], ts, item["item_id"], eid),
+                    )
+            elif not item["delete"]:
+                db.execute(
+                    """INSERT INTO enquiry_items
+                       (enquiry_id, product_category, specs, rate, rate_unit, quantity, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (eid, item["product_category"], item["specs"], item["rate"],
+                     item["rate_unit"], item["quantity"], ts, ts),
+                )
         db.commit()
         flash("Enquiry updated.", "success")
         return redirect(url_for("enquiry_detail", eid=eid))
-    return render_template("form.html", enquiry=enquiry)
+    items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ? ORDER BY id", (eid,)).fetchall()
+    return render_template("form.html", enquiry=enquiry, items=items)
 
 
 @app.route("/enquiry/<int:eid>/delete", methods=["POST"])
@@ -429,6 +552,7 @@ def enquiry_delete(eid):
     if enquiry is None:
         flash("Enquiry not found.", "error")
         return redirect(url_for("enquiries"))
+    db.execute("DELETE FROM enquiry_items WHERE enquiry_id = ?", (eid,))
     db.execute("DELETE FROM orders WHERE enquiry_id = ?", (eid,))
     db.execute("DELETE FROM enquiries WHERE id = ?", (eid,))
     db.commit()
@@ -437,97 +561,11 @@ def enquiry_delete(eid):
 
 
 # ---------------------------------------------------------------------------
-# Orders (payment tracking)
+# Orders (payment tracking) - per product line, with a bulk "whole order" action
 # ---------------------------------------------------------------------------
 
-def _get_or_create_order(db, eid):
-    order = db.execute("SELECT * FROM orders WHERE enquiry_id = ?", (eid,)).fetchone()
-    if order is None:
-        ts = now_str()
-        db.execute(
-            "INSERT INTO orders (enquiry_id, created_at, updated_at) VALUES (?, ?, ?)",
-            (eid, ts, ts),
-        )
-        db.commit()
-        order = db.execute("SELECT * FROM orders WHERE enquiry_id = ?", (eid,)).fetchone()
-    return order
-
-
-@app.route("/enquiry/<int:eid>/order", methods=["POST"])
-@login_required
-def enquiry_order_update(eid):
-    db = get_db()
-    order = _get_or_create_order(db, eid)
-    confirmed = 1 if request.form.get("confirmed") else 0
-    advance_received = 1 if request.form.get("advance_received") else 0
-    dispatched = 1 if request.form.get("dispatched") else 0
-    balance_received = 1 if request.form.get("balance_received") else 0
-
-    # Forward cascade: marking a later stage implies every earlier stage happened
-    # too, even if someone forgot to tick the earlier boxes. Keeps the pipeline
-    # state internally consistent (e.g. never dispatched=1 with confirmed=0).
-    if balance_received:
-        dispatched = 1
-    if dispatched:
-        advance_received = 1
-    if advance_received:
-        confirmed = 1
-
-    ts = now_str()
-    db.execute(
-        """UPDATE orders SET confirmed=?, confirmed_date=?, advance_received=?, advance_received_date=?,
-           dispatched=?, dispatched_date=?, balance_received=?, balance_received_date=?, updated_at=?
-           WHERE id=?""",
-        (
-            confirmed,
-            ts if confirmed and not order["confirmed"] else order["confirmed_date"],
-            advance_received,
-            ts if advance_received and not order["advance_received"] else order["advance_received_date"],
-            dispatched,
-            ts if dispatched and not order["dispatched"] else order["dispatched_date"],
-            balance_received,
-            ts if balance_received and not order["balance_received"] else order["balance_received_date"],
-            ts,
-            order["id"],
-        ),
-    )
-    db.commit()
-    flash("Order status updated.", "success")
-    return redirect(url_for("enquiry_detail", eid=eid))
-
-
 STAGE_ORDER = ["confirmed", "advance", "dispatched", "balance"]
-
-
-def _current_stage(order):
-    """Which pipeline stage an already-confirmed order is currently sitting at,
-    waiting to move to the next one."""
-    if not order["balance_received"]:
-        if not order["dispatched"]:
-            if not order["advance_received"]:
-                return "confirmed"
-            return "advance"
-        return "dispatched"
-    return "balance"
-
-
-@app.route("/enquiry/<int:eid>/order/advance-stage", methods=["POST"])
-@login_required
-def enquiry_order_advance_stage(eid):
-    db = get_db()
-    order = _get_or_create_order(db, eid)
-    stage = _current_stage(order)
-    ts = now_str()
-    if stage == "confirmed":
-        db.execute("UPDATE orders SET advance_received=1, advance_received_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
-    elif stage == "advance":
-        db.execute("UPDATE orders SET dispatched=1, dispatched_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
-    elif stage == "dispatched":
-        db.execute("UPDATE orders SET balance_received=1, balance_received_date=?, updated_at=? WHERE id=?", (ts, ts, order["id"]))
-    db.commit()
-    return redirect(url_for("orders_page"))
-
-
+STAGE_RANK = {"confirmed": 0, "advance": 1, "dispatched": 2, "balance": 3}
 STAGE_LABEL = {"confirmed": "Confirmed", "advance": "Advance", "dispatched": "Dispatched", "balance": "Balance"}
 NEXT_ACTION_LABEL = {
     "confirmed": "Mark advance received",
@@ -537,6 +575,106 @@ NEXT_ACTION_LABEL = {
 }
 
 
+def _current_stage(item):
+    """Which pipeline stage an already-confirmed item is currently sitting at,
+    waiting to move to the next one. Works on any row with the 4 stage flags,
+    an enquiry_items row here."""
+    if not item["balance_received"]:
+        if not item["dispatched"]:
+            if not item["advance_received"]:
+                return "confirmed"
+            return "advance"
+        return "dispatched"
+    return "balance"
+
+
+def _advance_item(db, item, ts):
+    stage = _current_stage(item)
+    if stage == "confirmed":
+        db.execute("UPDATE enquiry_items SET advance_received=1, advance_received_date=?, updated_at=? WHERE id=?", (ts, ts, item["id"]))
+    elif stage == "advance":
+        db.execute("UPDATE enquiry_items SET dispatched=1, dispatched_date=?, updated_at=? WHERE id=?", (ts, ts, item["id"]))
+    elif stage == "dispatched":
+        db.execute("UPDATE enquiry_items SET balance_received=1, balance_received_date=?, updated_at=? WHERE id=?", (ts, ts, item["id"]))
+
+
+@app.route("/enquiry/<int:eid>/item/<int:item_id>/order", methods=["POST"])
+@login_required
+def item_order_update(eid, item_id):
+    db = get_db()
+    item = db.execute("SELECT * FROM enquiry_items WHERE id = ? AND enquiry_id = ?", (item_id, eid)).fetchone()
+    if item is None:
+        flash("Product line not found.", "error")
+        return redirect(url_for("enquiry_detail", eid=eid))
+
+    confirmed = 1 if request.form.get("confirmed") else 0
+    advance_received = 1 if request.form.get("advance_received") else 0
+    dispatched = 1 if request.form.get("dispatched") else 0
+    balance_received = 1 if request.form.get("balance_received") else 0
+
+    # Forward cascade: marking a later stage implies every earlier stage happened
+    # too, even if someone forgot to tick the earlier boxes for this line.
+    if balance_received:
+        dispatched = 1
+    if dispatched:
+        advance_received = 1
+    if advance_received:
+        confirmed = 1
+
+    ts = now_str()
+    db.execute(
+        """UPDATE enquiry_items SET confirmed=?, confirmed_date=?, advance_received=?, advance_received_date=?,
+           dispatched=?, dispatched_date=?, balance_received=?, balance_received_date=?, updated_at=?
+           WHERE id=?""",
+        (
+            confirmed,
+            ts if confirmed and not item["confirmed"] else item["confirmed_date"],
+            advance_received,
+            ts if advance_received and not item["advance_received"] else item["advance_received_date"],
+            dispatched,
+            ts if dispatched and not item["dispatched"] else item["dispatched_date"],
+            balance_received,
+            ts if balance_received and not item["balance_received"] else item["balance_received_date"],
+            ts,
+            item["id"],
+        ),
+    )
+    db.commit()
+    flash("Product line status updated.", "success")
+    return redirect(url_for("enquiry_detail", eid=eid))
+
+
+@app.route("/enquiry/<int:eid>/item/<int:item_id>/order/advance-stage", methods=["POST"])
+@login_required
+def item_order_advance_stage(eid, item_id):
+    db = get_db()
+    item = db.execute("SELECT * FROM enquiry_items WHERE id = ? AND enquiry_id = ?", (item_id, eid)).fetchone()
+    if item is not None:
+        _advance_item(db, item, now_str())
+        db.commit()
+    return redirect(request.form.get("next") or url_for("enquiry_detail", eid=eid))
+
+
+@app.route("/enquiry/<int:eid>/order/advance-all", methods=["POST"])
+@login_required
+def order_advance_all(eid):
+    """Bulk action: move every confirmed product line in this order forward
+    one step, the "advance the entire order" option, as opposed to advancing
+    one product line at a time from the enquiry detail page."""
+    db = get_db()
+    items = db.execute(
+        "SELECT * FROM enquiry_items WHERE enquiry_id = ? AND confirmed = 1", (eid,)
+    ).fetchall()
+    if items:
+        bottleneck = min(STAGE_RANK[_current_stage(i)] for i in items)
+        ts = now_str()
+        for i in items:
+            if STAGE_RANK[_current_stage(i)] == bottleneck:
+                _advance_item(db, i, ts)
+        db.commit()
+    return redirect(url_for("orders_page"))
+
+
 @app.route("/orders")
 @login_required
 def orders_page():
@@ -544,44 +682,50 @@ def orders_page():
     sort = request.args.get("sort", "")
     sort_dir = request.args.get("dir", "asc")
     db = get_db()
-    rows = db.execute(
-        """SELECT e.*, o.confirmed, o.advance_received, o.dispatched, o.balance_received,
-                  o.confirmed_date, o.advance_received_date, o.dispatched_date, o.balance_received_date
-           FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-           WHERE o.confirmed = 1"""
+
+    enquiry_rows = db.execute(
+        """SELECT DISTINCT e.* FROM enquiries e
+           JOIN enquiry_items i ON i.enquiry_id = e.id
+           WHERE i.confirmed = 1"""
     ).fetchall()
 
     today_str = today_ist().isoformat()
     items = []
-    for r in rows:
-        stage = _current_stage(r)
+    for e in enquiry_rows:
+        all_items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ?", (e["id"],)).fetchall()
+        confirmed_items = [i for i in all_items if i["confirmed"]]
+        stage = min((STAGE_RANK[_current_stage(i)] for i in confirmed_items), default=0)
+        stage = STAGE_ORDER[stage]
         if stage == "balance" and not show_completed:
             continue
         overdue = (
-            not r["balance_received"]
-            and r["delivery_date"]
-            and r["delivery_date"] < today_str
+            e["delivery_date"]
+            and e["delivery_date"] < today_str
+            and any(not i["balance_received"] for i in confirmed_items)
         )
+        product_summary = ", ".join(i["product_category"] for i in confirmed_items if i["product_category"]) or "-"
         items.append({
-            "row": r,
+            "row": e,
             "overdue": overdue,
             "stage": stage,
             "stage_label": STAGE_LABEL[stage],
             "next_label": NEXT_ACTION_LABEL[stage],
+            "product_summary": product_summary,
+            "item_count": len(confirmed_items),
+            "mixed_stage": len({_current_stage(i) for i in confirmed_items}) > 1,
         })
 
-    stage_rank = {"confirmed": 0, "advance": 1, "dispatched": 2, "balance": 3}
     sort_keys = {
         "customer": lambda i: (i["row"]["customer_name"] or "").lower(),
-        "product": lambda i: (i["row"]["product_category"] or "").lower(),
+        "product": lambda i: i["product_summary"].lower(),
         "delivery": lambda i: i["row"]["delivery_date"] or "9999-99-99",
-        "stage": lambda i: stage_rank[i["stage"]],
+        "stage": lambda i: STAGE_RANK[i["stage"]],
     }
     if sort in sort_keys:
         items.sort(key=sort_keys[sort], reverse=(sort_dir == "desc"))
     else:
         # Default: active stages first, then earliest delivery date within a stage.
-        items.sort(key=lambda i: (stage_rank[i["stage"]], i["row"]["delivery_date"] or "9999-99-99"))
+        items.sort(key=lambda i: (STAGE_RANK[i["stage"]], i["row"]["delivery_date"] or "9999-99-99"))
 
     def sort_link(col):
         next_dir = "desc" if sort == col and sort_dir == "asc" else "asc"
@@ -640,34 +784,34 @@ def dashboard():
     ).fetchone()["c"]
 
     confirmed_count = db.execute(
-        f"""SELECT COUNT(*) c FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1""",
+        f"""SELECT COUNT(DISTINCT e.id) c FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1""",
         date_params,
     ).fetchone()["c"]
 
     confirmed_value = db.execute(
-        f"""SELECT COALESCE(SUM(e.rate * e.quantity), 0) v FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1""",
+        f"""SELECT COALESCE(SUM(i.rate * i.quantity), 0) v FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1""",
         date_params,
     ).fetchone()["v"]
 
     pending_advance = db.execute(
-        f"""SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
-            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1 AND o.advance_received = 0""",
+        f"""SELECT COUNT(*) c, COALESCE(SUM(i.rate * i.quantity), 0) amt
+            FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1 AND i.advance_received = 0""",
         date_params,
     ).fetchone()
 
     pending_balance = db.execute(
-        f"""SELECT COUNT(*) c, COALESCE(SUM(e.rate * e.quantity), 0) amt
-            FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} o.dispatched = 1 AND o.balance_received = 0""",
+        f"""SELECT COUNT(*) c, COALESCE(SUM(i.rate * i.quantity), 0) amt
+            FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} i.dispatched = 1 AND i.balance_received = 0""",
         date_params,
     ).fetchone()
 
     overdue_rows = db.execute(
-        f"""SELECT e.rate, e.quantity FROM enquiries e JOIN orders o ON o.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} o.confirmed = 1 AND o.balance_received = 0
+        f"""SELECT i.rate, i.quantity FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1 AND i.balance_received = 0
             AND e.delivery_date IS NOT NULL AND e.delivery_date != '' AND e.delivery_date < ?""",
         date_params + (today.isoformat(),),
     ).fetchall()
@@ -678,15 +822,20 @@ def dashboard():
     if total_enquiries:
         conversion_rate = round(100 * confirmed_count / total_enquiries, 1)
 
-    avg_row = db.execute(
-        f"SELECT AVG(e.rate * e.quantity) a FROM enquiries e {date_clause}{' AND' if date_clause else 'WHERE'} e.rate IS NOT NULL",
+    # Average quote value = average of each enquiry's total across all its
+    # product lines, not the average of individual line items.
+    per_enquiry_totals = db.execute(
+        f"""SELECT SUM(i.rate * i.quantity) total FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause} GROUP BY e.id""",
         date_params,
-    ).fetchone()
-    avg_quote_value = round(avg_row["a"], 2) if avg_row["a"] else 0
+    ).fetchall()
+    totals = [r["total"] for r in per_enquiry_totals if r["total"] is not None]
+    avg_quote_value = round(sum(totals) / len(totals), 2) if totals else 0
 
     by_category = db.execute(
-        f"""SELECT COALESCE(NULLIF(TRIM(e.product_category), ''), 'Uncategorized') cat, COUNT(*) c
-            FROM enquiries e {date_clause} GROUP BY cat ORDER BY c DESC""",
+        f"""SELECT COALESCE(NULLIF(TRIM(i.product_category), ''), 'Uncategorized') cat, COUNT(*) c
+            FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
+            {date_clause} GROUP BY cat ORDER BY c DESC""",
         date_params,
     ).fetchall()
     max_cat = max([r["c"] for r in by_category], default=1)
@@ -810,16 +959,25 @@ def partners_toggle_admin(uid):
 # Quotes
 # ---------------------------------------------------------------------------
 
-def build_quote_text(enquiry, settings):
-    rate = enquiry["rate"] or 0
-    quantity = enquiry["quantity"] or 1
-    total = round(rate * quantity, 2)
+def build_quote_text(enquiry, items, settings):
     advance_pct = float(settings.get("advance_percent", 25) or 25)
-    advance_amt = round(total * advance_pct / 100, 2)
-    balance_amt = round(total - advance_amt, 2)
 
-    raw_unit = (enquiry["rate_unit"] or "unit").strip()
-    unit_noun = raw_unit[4:].strip() if raw_unit.lower().startswith("per ") else raw_unit
+    product_lines = []
+    grand_total = 0
+    for item in items:
+        rate = item["rate"] or 0
+        quantity = item["quantity"] or 1
+        subtotal = round(rate * quantity, 2)
+        grand_total += subtotal
+        raw_unit = (item["rate_unit"] or "unit").strip()
+        unit_noun = raw_unit[4:].strip() if raw_unit.lower().startswith("per ") else raw_unit
+        product_lines.append(f"- {item['product_category'] or 'Product'}: {quantity} {unit_noun} x Rs. {rate} = Rs. {subtotal}")
+        if item["specs"]:
+            product_lines.append(f"  Specs: {item['specs']}")
+
+    grand_total = round(grand_total, 2)
+    advance_amt = round(grand_total * advance_pct / 100, 2)
+    balance_amt = round(grand_total - advance_amt, 2)
 
     lines = [
         settings.get("company_name", ""),
@@ -827,11 +985,11 @@ def build_quote_text(enquiry, settings):
         f"GST: {settings.get('gst_number', '')}",
         "",
         f"Quote for: {enquiry['customer_name']}" + (f" ({enquiry['company_name']})" if enquiry["company_name"] else ""),
-        f"Product: {enquiry['product_category'] or '-'}",
-        f"Specs: {enquiry['specs'] or '-'}",
-        f"Quantity: {quantity} {unit_noun}".strip(),
-        f"Rate: {rate} per {unit_noun}",
-        f"Total: Rs. {total}",
+        "",
+        "Products:",
+        *product_lines,
+        "",
+        f"Total: Rs. {grand_total}",
         "",
         f"Advance ({advance_pct:.0f}%): Rs. {advance_amt}",
         f"Balance ({100 - advance_pct:.0f}%): Rs. {balance_amt}",
@@ -845,7 +1003,7 @@ def build_quote_text(enquiry, settings):
         f"  IFSC: {settings.get('bank_ifsc', '') or 'not set in Settings'}",
         f"  Bank: {settings.get('bank_name', '') or 'not set in Settings'}",
     ]
-    return "\n".join(lines), total, advance_amt, balance_amt
+    return "\n".join(lines), grand_total, advance_amt, balance_amt
 
 
 @app.route("/enquiry/<int:eid>/quote")
@@ -856,8 +1014,9 @@ def enquiry_quote(eid):
     if enquiry is None:
         flash("Enquiry not found.", "error")
         return redirect(url_for("enquiries"))
+    items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ? ORDER BY id", (eid,)).fetchall()
     settings = get_settings()
-    quote_text, total, advance_amt, balance_amt = build_quote_text(enquiry, settings)
+    quote_text, total, advance_amt, balance_amt = build_quote_text(enquiry, items, settings)
     whatsapp_url = "https://wa.me/?text=" + urlquote(quote_text)
     return render_template(
         "quote.html",
@@ -896,8 +1055,9 @@ def enquiry_quote_email(eid):
         )
         return redirect(url_for("enquiry_quote", eid=eid))
 
+    items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ? ORDER BY id", (eid,)).fetchall()
     settings = get_settings()
-    quote_text, *_ = build_quote_text(enquiry, settings)
+    quote_text, *_ = build_quote_text(enquiry, items, settings)
 
     msg = MIMEText(quote_text)
     msg["Subject"] = f"Quote from {settings.get('company_name', 'Vardhaman Elastomer')}"

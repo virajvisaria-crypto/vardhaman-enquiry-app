@@ -15,7 +15,8 @@
   {% else %}
   Active orders only. Completed orders are hidden.
   {% endif %}
-  Click a column header to sort. Enquiries only appear here once marked Confirmed on their detail page.
+  Click a column header to sort. The button below advances every product line in an order
+  together, open an order to move individual product lines separately.
 </p>
 
 {% if items %}
@@ -24,7 +25,7 @@
     <thead>
       <tr>
         <th><a href="{{ sort_link('customer') }}" class="sort-link">Customer{% if sort == 'customer' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
-        <th><a href="{{ sort_link('product') }}" class="sort-link">Product{% if sort == 'product' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
+        <th><a href="{{ sort_link('product') }}" class="sort-link">Products{% if sort == 'product' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
         <th><a href="{{ sort_link('delivery') }}" class="sort-link">Delivery{% if sort == 'delivery' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
         <th><a href="{{ sort_link('stage') }}" class="sort-link">Stage{% if sort == 'stage' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
         <th></th>
@@ -37,12 +38,15 @@
         <td>
           <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>{% if e.company_name %} <span class="muted small">({{ e.company_name }})</span>{% endif %}
         </td>
-        <td>{{ e.product_category or '-' }}</td>
+        <td>{{ item.product_summary }}{% if item.item_count > 1 %} <span class="muted small">({{ item.item_count }} products)</span>{% endif %}</td>
         <td>{{ e.delivery_date or '-' }}{% if item.overdue %} <span class="tag tag-overdue">overdue</span>{% endif %}</td>
-        <td><span class="tag tag-stage-{{ item.stage }}">{{ item.stage_label }}</span></td>
+        <td>
+          <span class="tag tag-stage-{{ item.stage }}">{{ item.stage_label }}</span>
+          {% if item.mixed_stage %}<span class="muted small">(mixed)</span>{% endif %}
+        </td>
         <td class="partner-actions">
           {% if item.next_label %}
-          <form method="POST" action="{{ url_for('enquiry_order_advance_stage', eid=e.id) }}" style="display:inline">
+          <form method="POST" action="{{ url_for('order_advance_all', eid=e.id) }}" style="display:inline">
             <button type="submit" class="btn btn-small btn-primary">{{ item.next_label }}</button>
           </form>
           {% endif %}

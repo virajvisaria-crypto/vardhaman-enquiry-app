@@ -16,40 +16,48 @@
   <div><span class="label">Company</span>{{ enquiry.company_name or '-' }}</div>
   <div><span class="label">Phone</span>{{ enquiry.phone }}</div>
   <div><span class="label">Email</span>{{ enquiry.email or '-' }}</div>
-  <div><span class="label">Product</span>{{ enquiry.product_category or '-' }}</div>
-  <div><span class="label">Quantity</span>{{ enquiry.quantity or 1 }}</div>
-  <div><span class="label">Rate</span>{{ enquiry.rate or '-' }} {{ enquiry.rate_unit or '' }}</div>
   <div><span class="label">Delivery date</span>{{ enquiry.delivery_date or '-' }}</div>
   <div><span class="label">Partner accountable</span>{{ enquiry.partner_name }}</div>
 </div>
-<div class="detail-specs">
-  <span class="label">Specs</span>
-  <p>{{ enquiry.specs or '-' }}</p>
-</div>
 
-<h2>Order status</h2>
-<form method="POST" action="{{ url_for('enquiry_order_update', eid=enquiry.id) }}" class="order-form">
-  <label class="checkbox-row">
-    <input type="checkbox" name="confirmed" {{ 'checked' if order and order.confirmed }}>
-    Confirmed
-    {% if order and order.confirmed_date %}<span class="muted">({{ order.confirmed_date }})</span>{% endif %}
-  </label>
-  <label class="checkbox-row">
-    <input type="checkbox" name="advance_received" {{ 'checked' if order and order.advance_received }}>
-    Advance received
-    {% if order and order.advance_received_date %}<span class="muted">({{ order.advance_received_date }})</span>{% endif %}
-  </label>
-  <label class="checkbox-row">
-    <input type="checkbox" name="dispatched" {{ 'checked' if order and order.dispatched }}>
-    Dispatched
-    {% if order and order.dispatched_date %}<span class="muted">({{ order.dispatched_date }})</span>{% endif %}
-  </label>
-  <label class="checkbox-row">
-    <input type="checkbox" name="balance_received" {{ 'checked' if order and order.balance_received }}>
-    Balance received
-    {% if order and order.balance_received_date %}<span class="muted">({{ order.balance_received_date }})</span>{% endif %}
-  </label>
-  <p class="muted small">Ticking a later stage automatically fills in the earlier ones, e.g. marking Dispatched also marks Confirmed and Advance received.</p>
-  <button type="submit" class="btn btn-primary">Update</button>
-</form>
+<h2>Products</h2>
+{% for entry in items %}
+{% set item = entry.item %}
+<div class="item-block">
+  <div class="item-block-header">
+    <span class="item-block-title">{{ item.product_category or 'Product' }}{% if item.quantity and item.rate %} &middot; {{ item.quantity }} {{ item.rate_unit or '' }} &times; Rs. {{ item.rate }}{% endif %}</span>
+    {% if entry.stage %}<span class="tag tag-stage-{{ entry.stage }}">{{ entry.stage|capitalize }}</span>{% endif %}
+  </div>
+  {% if item.specs %}<p class="muted small">{{ item.specs }}</p>{% endif %}
+
+  <form method="POST" action="{{ url_for('item_order_update', eid=enquiry.id, item_id=item.id) }}" class="order-form">
+    <label class="checkbox-row">
+      <input type="checkbox" name="confirmed" {{ 'checked' if item.confirmed }}>
+      Confirmed
+      {% if item.confirmed_date %}<span class="muted">({{ item.confirmed_date }})</span>{% endif %}
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="advance_received" {{ 'checked' if item.advance_received }}>
+      Advance received
+      {% if item.advance_received_date %}<span class="muted">({{ item.advance_received_date }})</span>{% endif %}
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="dispatched" {{ 'checked' if item.dispatched }}>
+      Dispatched
+      {% if item.dispatched_date %}<span class="muted">({{ item.dispatched_date }})</span>{% endif %}
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="balance_received" {{ 'checked' if item.balance_received }}>
+      Balance received
+      {% if item.balance_received_date %}<span class="muted">({{ item.balance_received_date }})</span>{% endif %}
+    </label>
+    <button type="submit" class="btn btn-small btn-primary">Update this product</button>
+  </form>
+</div>
+{% endfor %}
+
+<p class="muted small">
+  Ticking a later stage automatically fills in the earlier ones for that product.
+  Each product moves through its own stages independently, use the Orders page to move the whole order together instead.
+</p>
 {% endblock %}

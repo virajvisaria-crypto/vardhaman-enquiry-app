@@ -154,6 +154,19 @@ input:focus, textarea:focus, select:focus {
 .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .form-row label { flex: 1; min-width: 140px; }
 
+.item-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 4px;
+  background: #fbfaf7;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.item-block-header { display: flex; justify-content: space-between; align-items: center; }
+.item-block-title { font-size: 0.85rem; font-weight: 600; color: var(--steel-dark); }
+
 .checkbox-row {
   flex-direction: row;
   align-items: center;
