@@ -8,7 +8,19 @@
   {% for key, label in periods.items() %}
   <a href="{{ url_for('dashboard', period=key) }}" class="{{ 'active' if period == key }}">{{ label }}</a>
   {% endfor %}
+  <a href="#custom-range" class="{{ 'active' if period == 'custom' }}">Custom range</a>
 </div>
+
+<form method="GET" action="{{ url_for('dashboard') }}" class="date-range-form" id="custom-range">
+  <input type="hidden" name="period" value="custom">
+  <label class="muted small">From
+    <input type="date" name="from" value="{{ custom_from }}">
+  </label>
+  <label class="muted small">To
+    <input type="date" name="to" value="{{ custom_to }}">
+  </label>
+  <button type="submit" class="btn">Apply</button>
+</form>
 
 <div class="stats-grid">
   <div class="stat-card">

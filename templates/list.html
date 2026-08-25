@@ -2,12 +2,34 @@
 {% block content %}
 <div class="page-header">
   <h1>Enquiries</h1>
-  <a href="{{ url_for('enquiry_add') }}" class="btn btn-primary">+ Add Enquiry</a>
+  <div class="header-actions">
+    <a href="{{ url_for('enquiries_export', q=q or None, product=product_filter or None, delivery_from=delivery_from or None, delivery_to=delivery_to or None, sort=sort or None, dir=sort_dir) }}" class="btn">Export CSV</a>
+    <a href="{{ url_for('enquiry_add') }}" class="btn btn-primary">+ Add Enquiry</a>
+  </div>
 </div>
 
-<form class="search-bar" method="GET">
-  <input type="text" name="q" placeholder="Search by customer or company name" value="{{ q }}">
-  <button type="submit" class="btn">Search</button>
+<form class="filter-form" method="GET">
+  <label class="muted small">Search
+    <input type="text" name="q" placeholder="Customer or company name" value="{{ q }}">
+  </label>
+  <label class="muted small">Product
+    <select name="product">
+      <option value="">All products</option>
+      {% for cat in all_categories %}
+      <option value="{{ cat }}" {{ 'selected' if product_filter == cat }}>{{ cat }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="muted small">Delivery from
+    <input type="date" name="delivery_from" value="{{ delivery_from }}">
+  </label>
+  <label class="muted small">Delivery to
+    <input type="date" name="delivery_to" value="{{ delivery_to }}">
+  </label>
+  <button type="submit" class="btn">Filter</button>
+  {% if q or product_filter or delivery_from or delivery_to %}
+  <a href="{{ url_for('enquiries') }}" class="btn">Clear</a>
+  {% endif %}
 </form>
 
 {% if enquiries %}
@@ -15,11 +37,11 @@
   <table class="data-table">
     <thead>
       <tr>
-        <th>Customer</th>
-        <th>Enquiry date</th>
-        <th>Product</th>
+        <th><a href="{{ sort_link('customer') }}" class="sort-link">Customer{% if sort == 'customer' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
+        <th class="nowrap"><a href="{{ sort_link('enquiry_date') }}" class="sort-link">Enquiry{% if sort == 'enquiry_date' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
+        <th><a href="{{ sort_link('product') }}" class="sort-link">Product{% if sort == 'product' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
         <th>Partner</th>
-        <th>Delivery</th>
+        <th class="nowrap"><a href="{{ sort_link('delivery') }}" class="sort-link">Delivery{% if sort == 'delivery' %} {{ '↑' if sort_dir == 'asc' else '↓' }}{% endif %}</a></th>
         <th></th>
       </tr>
     </thead>
@@ -31,10 +53,10 @@
           <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>{% if e.company_name %} <span class="muted small">({{ e.company_name }})</span>{% endif %}
           {% if row.confirmed %}<span class="tag tag-confirmed">order</span>{% endif %}
         </td>
-        <td>{{ e.enquiry_date or '-' }}</td>
+        <td class="nowrap">{{ e.enquiry_date or '-' }}</td>
         <td>{{ row.product_summary }}</td>
         <td>{{ e.partner_name }}</td>
-        <td>{{ e.delivery_date or '-' }}</td>
+        <td class="nowrap">{{ e.delivery_date or '-' }}</td>
         <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">View</a></td>
       </tr>
       {% endfor %}
@@ -42,6 +64,6 @@
   </table>
 </div>
 {% else %}
-<p class="empty-state">No enquiries yet. Add the first one to get started.</p>
+<p class="empty-state">No enquiries match these filters.</p>
 {% endif %}
 {% endblock %}

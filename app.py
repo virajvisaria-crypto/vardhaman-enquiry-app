@@ -1,13 +1,15 @@
 import os
 import sqlite3
 import smtplib
+import csv
+import io
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
 from functools import wraps
 from urllib.parse import quote as urlquote
 
-from flask import Flask, g, render_template, request, redirect, url_for, session, flash
+from flask import Flask, g, render_template, request, redirect, url_for, session, flash, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -393,31 +395,107 @@ def index():
     return redirect(url_for("enquiries"))
 
 
-@app.route("/enquiries")
-@login_required
-def enquiries():
-    q = request.args.get("q", "").strip()
+def _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir):
     db = get_db()
+    clauses = []
+    params = []
     if q:
-        rows = db.execute(
-            "SELECT * FROM enquiries WHERE customer_name LIKE ? OR company_name LIKE ? ORDER BY enquiry_date DESC, created_at DESC",
-            (f"%{q}%", f"%{q}%"),
-        ).fetchall()
-    else:
-        rows = db.execute("SELECT * FROM enquiries ORDER BY enquiry_date DESC, created_at DESC").fetchall()
+        clauses.append("(customer_name LIKE ? OR company_name LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+    if delivery_from:
+        clauses.append("delivery_date >= ?")
+        params.append(delivery_from)
+    if delivery_to:
+        clauses.append("delivery_date <= ?")
+        params.append(delivery_to)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = db.execute(
+        f"SELECT * FROM enquiries {where} ORDER BY enquiry_date DESC, created_at DESC", params
+    ).fetchall()
 
-    enquiries_with_items = []
+    results = []
     for e in rows:
         items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ?", (e["id"],)).fetchall()
         categories = [i["product_category"] for i in items if i["product_category"]]
+        if product_filter and product_filter not in categories:
+            continue
         if len(categories) > 2:
             product_summary = f"{categories[0]}, {categories[1]} +{len(categories) - 2} more"
         else:
             product_summary = ", ".join(categories) if categories else "-"
         confirmed = any(i["confirmed"] for i in items)
-        enquiries_with_items.append({"e": e, "product_summary": product_summary, "confirmed": confirmed})
+        results.append({"e": e, "product_summary": product_summary, "confirmed": confirmed})
 
-    return render_template("list.html", enquiries=enquiries_with_items, q=q)
+    sort_keys = {
+        "customer": lambda r: (r["e"]["customer_name"] or "").lower(),
+        "enquiry_date": lambda r: r["e"]["enquiry_date"] or "",
+        "product": lambda r: r["product_summary"].lower(),
+        "delivery": lambda r: r["e"]["delivery_date"] or "9999-99-99",
+    }
+    if sort in sort_keys:
+        results.sort(key=sort_keys[sort], reverse=(sort_dir == "desc"))
+    return results
+
+
+@app.route("/enquiries")
+@login_required
+def enquiries():
+    q = request.args.get("q", "").strip()
+    product_filter = request.args.get("product", "").strip()
+    delivery_from = request.args.get("delivery_from", "").strip()
+    delivery_to = request.args.get("delivery_to", "").strip()
+    sort = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
+
+    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir)
+
+    db = get_db()
+    all_categories = [
+        r["product_category"] for r in db.execute(
+            "SELECT DISTINCT product_category FROM enquiry_items "
+            "WHERE product_category IS NOT NULL AND product_category != '' ORDER BY product_category"
+        ).fetchall()
+    ]
+
+    def sort_link(col):
+        next_dir = "desc" if sort == col and sort_dir == "asc" else "asc"
+        return url_for("enquiries", q=q or None, product=product_filter or None,
+                        delivery_from=delivery_from or None, delivery_to=delivery_to or None,
+                        sort=col, dir=next_dir)
+
+    return render_template(
+        "list.html", enquiries=results, q=q, product_filter=product_filter,
+        delivery_from=delivery_from, delivery_to=delivery_to, all_categories=all_categories,
+        sort=sort, sort_dir=sort_dir, sort_link=sort_link,
+    )
+
+
+@app.route("/enquiries/export")
+@login_required
+def enquiries_export():
+    q = request.args.get("q", "").strip()
+    product_filter = request.args.get("product", "").strip()
+    delivery_from = request.args.get("delivery_from", "").strip()
+    delivery_to = request.args.get("delivery_to", "").strip()
+    sort = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
+    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Customer", "Company", "Phone", "Email", "Enquiry Date", "Delivery Date", "Products", "Partner", "Order"])
+    for r in results:
+        e = r["e"]
+        writer.writerow([
+            e["customer_name"], e["company_name"] or "", e["phone"], e["email"] or "",
+            e["enquiry_date"] or "", e["delivery_date"] or "", r["product_summary"],
+            e["partner_name"], "Yes" if r["confirmed"] else "No",
+        ])
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=enquiries.csv"},
+    )
 
 
 MAX_ITEMS = 10
@@ -689,14 +767,8 @@ def order_advance_all(eid):
     return redirect(url_for("orders_page"))
 
 
-@app.route("/orders")
-@login_required
-def orders_page():
-    show_completed = request.args.get("show_completed") == "1"
-    sort = request.args.get("sort", "")
-    sort_dir = request.args.get("dir", "asc")
+def _query_orders(show_completed, sort, sort_dir):
     db = get_db()
-
     enquiry_rows = db.execute(
         """SELECT DISTINCT e.* FROM enquiries e
            JOIN enquiry_items i ON i.enquiry_id = e.id
@@ -740,6 +812,16 @@ def orders_page():
     else:
         # Default: active stages first, then earliest delivery date within a stage.
         items.sort(key=lambda i: (STAGE_RANK[i["stage"]], i["row"]["delivery_date"] or "9999-99-99"))
+    return items
+
+
+@app.route("/orders")
+@login_required
+def orders_page():
+    show_completed = request.args.get("show_completed") == "1"
+    sort = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
+    items = _query_orders(show_completed, sort, sort_dir)
 
     def sort_link(col):
         next_dir = "desc" if sort == col and sort_dir == "asc" else "asc"
@@ -748,6 +830,30 @@ def orders_page():
     return render_template(
         "orders.html", items=items, show_completed=show_completed,
         sort=sort, sort_dir=sort_dir, sort_link=sort_link,
+    )
+
+
+@app.route("/orders/export")
+@login_required
+def orders_export():
+    show_completed = request.args.get("show_completed") == "1"
+    sort = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
+    items = _query_orders(show_completed, sort, sort_dir)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Customer", "Company", "Products", "Delivery Date", "Stage", "Overdue"])
+    for item in items:
+        e = item["row"]
+        writer.writerow([
+            e["customer_name"], e["company_name"] or "", item["product_summary"],
+            e["delivery_date"] or "", item["stage_label"], "Yes" if item["overdue"] else "No",
+        ])
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=orders.csv"},
     )
 
 
@@ -781,17 +887,23 @@ def _period_range(period, today):
 def dashboard():
     db = get_db()
     period = request.args.get("period", "month")
-    if period not in PERIODS:
-        period = "month"
+    custom_from = request.args.get("from", "").strip()
+    custom_to = request.args.get("to", "").strip()
     today = today_ist()
-    date_from, date_to = _period_range(period, today)
 
-    if date_from:
+    if period == "custom" and custom_from and custom_to:
         date_clause = "WHERE e.enquiry_date BETWEEN ? AND ?"
-        date_params = (date_from.isoformat(), date_to.isoformat())
+        date_params = (custom_from, custom_to)
     else:
-        date_clause = ""
-        date_params = ()
+        if period not in PERIODS:
+            period = "month"
+        date_from, date_to = _period_range(period, today)
+        if date_from:
+            date_clause = "WHERE e.enquiry_date BETWEEN ? AND ?"
+            date_params = (date_from.isoformat(), date_to.isoformat())
+        else:
+            date_clause = ""
+            date_params = ()
 
     total_enquiries = db.execute(
         f"SELECT COUNT(*) c FROM enquiries e {date_clause}", date_params
@@ -869,7 +981,7 @@ def dashboard():
     }
     return render_template(
         "dashboard.html", stats=stats, by_category=by_category, max_cat=max_cat,
-        period=period, periods=PERIODS,
+        period=period, periods=PERIODS, custom_from=custom_from, custom_to=custom_to,
     )
 
 

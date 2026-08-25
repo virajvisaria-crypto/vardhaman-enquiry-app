@@ -2,11 +2,14 @@
 {% block content %}
 <div class="page-header">
   <h1>Orders</h1>
-  {% if show_completed %}
-  <a href="{{ url_for('orders_page') }}" class="btn">Hide completed</a>
-  {% else %}
-  <a href="{{ url_for('orders_page', show_completed=1) }}" class="btn">Show completed too</a>
-  {% endif %}
+  <div class="header-actions">
+    <a href="{{ url_for('orders_export', show_completed=1 if show_completed else None, sort=sort or None, dir=sort_dir) }}" class="btn">Export CSV</a>
+    {% if show_completed %}
+    <a href="{{ url_for('orders_page') }}" class="btn">Hide completed</a>
+    {% else %}
+    <a href="{{ url_for('orders_page', show_completed=1) }}" class="btn">Show completed too</a>
+    {% endif %}
+  </div>
 </div>
 
 <p class="muted small">

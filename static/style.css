@@ -192,6 +192,15 @@ input:focus, textarea:focus, select:focus {
 .search-bar { display: flex; gap: 8px; margin-bottom: 16px; max-width: 480px; }
 .search-bar input { flex: 1; }
 
+.date-range-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.date-range-form label { flex-direction: column; }
+
+.filter-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.filter-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
+.filter-form input, .filter-form select { min-width: 150px; }
+
+.nowrap { white-space: nowrap; }
+
 /* Table */
 .table-wrap { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); }
 .data-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
