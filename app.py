@@ -166,6 +166,11 @@ def init_db():
         )
         db.commit()
 
+    if "tax_invoice_no" not in enquiry_cols:
+        db.execute("ALTER TABLE enquiries ADD COLUMN tax_invoice_no TEXT")
+        db.execute("ALTER TABLE enquiries ADD COLUMN tax_invoice_date TEXT")
+        db.commit()
+
     if "is_active" not in user_cols:
         db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
         db.commit()
@@ -395,7 +400,10 @@ def index():
     return redirect(url_for("enquiries"))
 
 
-def _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir):
+ARCHIVE_DAYS = 180  # ~6 months
+
+
+def _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir, bucket="active"):
     db = get_db()
     clauses = []
     params = []
@@ -408,6 +416,15 @@ def _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_d
     if delivery_to:
         clauses.append("delivery_date <= ?")
         params.append(delivery_to)
+
+    cutoff = (today_ist() - timedelta(days=ARCHIVE_DAYS)).isoformat()
+    if bucket == "archive":
+        clauses.append("enquiry_date < ?")
+        params.append(cutoff)
+    else:
+        clauses.append("(enquiry_date IS NULL OR enquiry_date >= ?)")
+        params.append(cutoff)
+
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = db.execute(
         f"SELECT * FROM enquiries {where} ORDER BY enquiry_date DESC, created_at DESC", params
@@ -416,6 +433,11 @@ def _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_d
     results = []
     for e in rows:
         items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ?", (e["id"],)).fetchall()
+        # Once any product on an enquiry is confirmed, the whole enquiry moves
+        # to the Orders page instead, it doesn't belong on Enquiries or Archive
+        # anymore, regardless of whether its other products are still unconfirmed.
+        if any(i["confirmed"] for i in items):
+            continue
         categories = [i["product_category"] for i in items if i["product_category"]]
         if product_filter and product_filter not in categories:
             continue
@@ -423,8 +445,7 @@ def _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_d
             product_summary = f"{categories[0]}, {categories[1]} +{len(categories) - 2} more"
         else:
             product_summary = ", ".join(categories) if categories else "-"
-        confirmed = any(i["confirmed"] for i in items)
-        results.append({"e": e, "product_summary": product_summary, "confirmed": confirmed})
+        results.append({"e": e, "product_summary": product_summary, "confirmed": False})
 
     sort_keys = {
         "customer": lambda r: (r["e"]["customer_name"] or "").lower(),
@@ -447,7 +468,7 @@ def enquiries():
     sort = request.args.get("sort", "")
     sort_dir = request.args.get("dir", "asc")
 
-    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir)
+    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir, bucket="active")
 
     db = get_db()
     all_categories = [
@@ -466,7 +487,40 @@ def enquiries():
     return render_template(
         "list.html", enquiries=results, q=q, product_filter=product_filter,
         delivery_from=delivery_from, delivery_to=delivery_to, all_categories=all_categories,
-        sort=sort, sort_dir=sort_dir, sort_link=sort_link,
+        sort=sort, sort_dir=sort_dir, sort_link=sort_link, archive=False,
+    )
+
+
+@app.route("/enquiries/archive")
+@login_required
+def enquiries_archive():
+    q = request.args.get("q", "").strip()
+    product_filter = request.args.get("product", "").strip()
+    delivery_from = request.args.get("delivery_from", "").strip()
+    delivery_to = request.args.get("delivery_to", "").strip()
+    sort = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
+
+    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir, bucket="archive")
+
+    db = get_db()
+    all_categories = [
+        r["product_category"] for r in db.execute(
+            "SELECT DISTINCT product_category FROM enquiry_items "
+            "WHERE product_category IS NOT NULL AND product_category != '' ORDER BY product_category"
+        ).fetchall()
+    ]
+
+    def sort_link(col):
+        next_dir = "desc" if sort == col and sort_dir == "asc" else "asc"
+        return url_for("enquiries_archive", q=q or None, product=product_filter or None,
+                        delivery_from=delivery_from or None, delivery_to=delivery_to or None,
+                        sort=col, dir=next_dir)
+
+    return render_template(
+        "list.html", enquiries=results, q=q, product_filter=product_filter,
+        delivery_from=delivery_from, delivery_to=delivery_to, all_categories=all_categories,
+        sort=sort, sort_dir=sort_dir, sort_link=sort_link, archive=True,
     )
 
 
@@ -479,7 +533,8 @@ def enquiries_export():
     delivery_to = request.args.get("delivery_to", "").strip()
     sort = request.args.get("sort", "")
     sort_dir = request.args.get("dir", "asc")
-    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir)
+    bucket = "archive" if request.args.get("archive") == "1" else "active"
+    results = _query_enquiries(q, product_filter, delivery_from, delivery_to, sort, sort_dir, bucket=bucket)
 
     buf = io.StringIO()
     writer = csv.writer(buf)
@@ -494,7 +549,7 @@ def enquiries_export():
     return Response(
         buf.getvalue(),
         mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=enquiries.csv"},
+        headers={"Content-Disposition": f"attachment; filename={'archive' if bucket == 'archive' else 'enquiries'}.csv"},
     )
 
 
@@ -583,6 +638,28 @@ def enquiry_detail(eid):
     items = db.execute("SELECT * FROM enquiry_items WHERE enquiry_id = ? ORDER BY id", (eid,)).fetchall()
     items_with_stage = [{"item": i, "stage": _current_stage(i) if i["confirmed"] else None} for i in items]
     return render_template("detail.html", enquiry=enquiry, items=items_with_stage)
+
+
+@app.route("/enquiry/<int:eid>/invoice", methods=["POST"])
+@login_required
+def enquiry_invoice_update(eid):
+    db = get_db()
+    enquiry = db.execute("SELECT * FROM enquiries WHERE id = ?", (eid,)).fetchone()
+    if enquiry is None:
+        flash("Enquiry not found.", "error")
+        return redirect(url_for("enquiries"))
+    db.execute(
+        "UPDATE enquiries SET tax_invoice_no = ?, tax_invoice_date = ?, updated_at = ? WHERE id = ?",
+        (
+            request.form.get("tax_invoice_no", "").strip(),
+            request.form.get("tax_invoice_date", "").strip(),
+            now_str(),
+            eid,
+        ),
+    )
+    db.commit()
+    flash("Tax invoice number updated.", "success")
+    return redirect(url_for("enquiry_detail", eid=eid))
 
 
 @app.route("/enquiry/<int:eid>/edit", methods=["GET", "POST"])
@@ -789,7 +866,11 @@ def _query_orders(show_completed, sort, sort_dir):
             and e["delivery_date"] < today_str
             and any(not i["balance_received"] for i in confirmed_items)
         )
+        unconfirmed_items = [i for i in all_items if not i["confirmed"]]
         product_summary = ", ".join(i["product_category"] for i in confirmed_items if i["product_category"]) or "-"
+        if unconfirmed_items:
+            unconfirmed_names = ", ".join(i["product_category"] or "product" for i in unconfirmed_items)
+            product_summary += f" (+ {unconfirmed_names}, not yet confirmed)"
         items.append({
             "row": e,
             "overdue": overdue,
@@ -798,6 +879,7 @@ def _query_orders(show_completed, sort, sort_dir):
             "next_label": NEXT_ACTION_LABEL[stage],
             "product_summary": product_summary,
             "item_count": len(confirmed_items),
+            "has_unconfirmed": bool(unconfirmed_items),
             "mixed_stage": len({_current_stage(i) for i in confirmed_items}) > 1,
         })
 
@@ -843,12 +925,13 @@ def orders_export():
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["Customer", "Company", "Products", "Delivery Date", "Stage", "Overdue"])
+    writer.writerow(["Customer", "Company", "Products", "Delivery Date", "Stage", "Overdue", "Tax Invoice No.", "Tax Invoice Date"])
     for item in items:
         e = item["row"]
         writer.writerow([
             e["customer_name"], e["company_name"] or "", item["product_summary"],
             e["delivery_date"] or "", item["stage_label"], "Yes" if item["overdue"] else "No",
+            e["tax_invoice_no"] or "", e["tax_invoice_date"] or "",
         ])
     return Response(
         buf.getvalue(),

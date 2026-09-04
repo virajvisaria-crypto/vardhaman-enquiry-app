@@ -20,6 +20,21 @@
   <div><span class="label">Partner accountable</span>{{ enquiry.partner_name }}</div>
 </div>
 
+{% if items|selectattr('item.confirmed')|list %}
+<h2>Order details</h2>
+<form method="POST" action="{{ url_for('enquiry_invoice_update', eid=enquiry.id) }}" class="order-form">
+  <div class="form-row">
+    <label>Tax Invoice No. <span class="muted small">(one invoice for the whole order)</span>
+      <input type="text" name="tax_invoice_no" value="{{ enquiry.tax_invoice_no or '' }}">
+    </label>
+    <label>Tax Invoice Date
+      <input type="date" name="tax_invoice_date" value="{{ enquiry.tax_invoice_date or '' }}">
+    </label>
+  </div>
+  <button type="submit" class="btn btn-small btn-primary">Save</button>
+</form>
+{% endif %}
+
 <h2>Products</h2>
 {% for entry in items %}
 {% set item = entry.item %}
