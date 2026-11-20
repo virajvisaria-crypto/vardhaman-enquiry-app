@@ -4,6 +4,8 @@
   <h1>Settings</h1>
   <a href="{{ url_for('partners_page') }}" class="btn">Manage partner access</a>
 </div>
+<p><a href="{{ url_for('settings_backup') }}" class="btn">Download full backup</a>
+<span class="muted small">Saves a copy of all data. Keep it somewhere safe.</span></p>
 <p class="muted small">Only admin partners can edit this. Changes apply to every quote immediately.</p>
 
 <form method="POST" class="stacked-form">

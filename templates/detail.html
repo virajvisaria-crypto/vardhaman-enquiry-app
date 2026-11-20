@@ -5,10 +5,13 @@
   <div class="header-actions">
     <a href="{{ url_for('enquiry_edit', eid=enquiry.id) }}" class="btn">Edit</a>
     <a href="{{ url_for('enquiry_quote', eid=enquiry.id) }}" class="btn btn-primary">Generate Quote</a>
+    {% if current_user and current_user.is_admin %}
     <form method="POST" action="{{ url_for('enquiry_delete', eid=enquiry.id) }}" style="display:inline"
-          onsubmit="return confirm('Delete this enquiry for {{ enquiry.customer_name }}? This can\'t be undone.');">
+          data-confirm="Delete this enquiry for {{ enquiry.customer_name }}? This can't be undone."
+          onsubmit="return confirm(this.dataset.confirm);">
       <button type="submit" class="btn btn-danger">Delete</button>
     </form>
+    {% endif %}
   </div>
 </div>
 

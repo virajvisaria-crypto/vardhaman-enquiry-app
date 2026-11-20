@@ -3,6 +3,8 @@ import sqlite3
 import smtplib
 import csv
 import io
+import re
+import tempfile
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
@@ -14,6 +16,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",  # stops other sites from making the browser submit forms here
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RAILWAY_ENVIRONMENT")),  # https-only on Railway
+)
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -300,7 +307,7 @@ def admin_required(view):
         if not user:
             return redirect(url_for("login"))
         if not user["is_admin"]:
-            flash("Only an admin partner can access Settings.", "error")
+            flash("Only an admin partner can do that.", "error")
             return redirect(url_for("enquiries"))
         return view(*args, **kwargs)
     return wrapped
@@ -308,6 +315,41 @@ def admin_required(view):
 
 def now_str():
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _to_float(value, default=0.0):
+    """Forgiving number reader for display and quote maths, so one bad value
+    already sitting in the database can never crash a page."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _advance_pct(settings):
+    pct = _to_float(settings.get("advance_percent"), 25.0)
+    return pct if 0 <= pct <= 100 else 25.0
+
+
+def _safe_next(target, fallback):
+    """Only allow redirects to a page inside this app."""
+    if target and target.startswith("/") and not target.startswith("//") and "\\" not in target:
+        return target
+    return fallback
+
+
+_PLAIN_NUMBER = re.compile(r"^[+-]?[\d\s()-]+$")
+
+
+def _csv_cell(value):
+    """Stop Excel/Sheets from running a cell as a formula (a name starting with
+    '=' or '@', say). Phone numbers like +91 98... are left alone."""
+    if value is None:
+        return ""
+    text = str(value)
+    if text and (text[0] in "=@\t\r" or (text[0] in "+-" and not _PLAIN_NUMBER.match(text))):
+        return "'" + text
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -541,11 +583,11 @@ def enquiries_export():
     writer.writerow(["Customer", "Company", "Phone", "Email", "Enquiry Date", "Delivery Date", "Products", "Partner", "Order"])
     for r in results:
         e = r["e"]
-        writer.writerow([
+        writer.writerow([_csv_cell(v) for v in [
             e["customer_name"], e["company_name"] or "", e["phone"], e["email"] or "",
             e["enquiry_date"] or "", e["delivery_date"] or "", r["product_summary"],
             e["partner_name"], "Yes" if r["confirmed"] else "No",
-        ])
+        ]])
     return Response(
         buf.getvalue(),
         mimetype="text/csv",
@@ -566,22 +608,45 @@ def _parse_item_slots(form):
         rate = form.get(f"item_{n}_rate", "").strip()
         if not category and not rate:
             continue
+        qty_raw = form.get(f"item_{n}_quantity", "").strip()
+        try:
+            rate_val = float(rate) if rate else None
+            qty_val = float(qty_raw) if qty_raw else 1.0
+        except ValueError:
+            raise ValueError(f"Product {n}: rate and quantity must be numbers.")
+        if (rate_val is not None and rate_val < 0) or qty_val <= 0:
+            raise ValueError(f"Product {n}: rate can't be negative and quantity must be above zero.")
         slots.append({
             "item_id": form.get(f"item_{n}_id", "").strip(),
             "product_category": category,
             "specs": form.get(f"item_{n}_specs", "").strip(),
-            "rate": rate or None,
+            "rate": rate_val,
             "rate_unit": form.get(f"item_{n}_rate_unit", "").strip(),
-            "quantity": form.get(f"item_{n}_quantity", "").strip() or 1,
+            "quantity": qty_val,
             "delete": form.get(f"item_{n}_delete") == "1",
         })
     return slots
+
+
+def _check_enquiry_form(form):
+    """Server-side backstop for the form. Returns (items, error_message)."""
+    for field, label in (("customer_name", "Customer name"), ("phone", "Phone"), ("partner_name", "Partner name")):
+        if not form.get(field, "").strip():
+            return None, f"{label} is required."
+    try:
+        return _parse_item_slots(form), None
+    except ValueError as exc:
+        return None, str(exc)
 
 
 @app.route("/enquiry/add", methods=["GET", "POST"])
 @login_required
 def enquiry_add():
     if request.method == "POST":
+        parsed_items, error = _check_enquiry_form(request.form)
+        if error:
+            flash(error + " Nothing was saved, please try again.", "error")
+            return redirect(url_for("enquiry_add"))
         db = get_db()
         ts = now_str()
         cur = db.execute(
@@ -604,7 +669,7 @@ def enquiry_add():
         )
         eid = cur.lastrowid
 
-        items = _parse_item_slots(request.form)
+        items = parsed_items
         if not items:
             # Nobody filled in even one product, keep the old single-field
             # behaviour so this still works exactly like before for the
@@ -671,6 +736,10 @@ def enquiry_edit(eid):
         flash("Enquiry not found.", "error")
         return redirect(url_for("enquiries"))
     if request.method == "POST":
+        parsed_items, error = _check_enquiry_form(request.form)
+        if error:
+            flash(error + " Nothing was saved, please try again.", "error")
+            return redirect(url_for("enquiry_edit", eid=eid))
         db.execute(
             """UPDATE enquiries SET customer_name=?, company_name=?, phone=?, email=?,
                delivery_date=?, enquiry_date=?, partner_name=?, updated_at=? WHERE id=?""",
@@ -687,7 +756,7 @@ def enquiry_edit(eid):
             ),
         )
         ts = now_str()
-        for item in _parse_item_slots(request.form):
+        for item in parsed_items:
             if item["item_id"]:
                 if item["delete"]:
                     db.execute("DELETE FROM enquiry_items WHERE id = ? AND enquiry_id = ?", (item["item_id"], eid))
@@ -715,6 +784,7 @@ def enquiry_edit(eid):
 
 @app.route("/enquiry/<int:eid>/delete", methods=["POST"])
 @login_required
+@admin_required
 def enquiry_delete(eid):
     db = get_db()
     enquiry = db.execute("SELECT * FROM enquiries WHERE id = ?", (eid,)).fetchone()
@@ -821,7 +891,7 @@ def item_order_advance_stage(eid, item_id):
     if item is not None:
         _advance_item(db, item, now_str())
         db.commit()
-    return redirect(request.form.get("next") or url_for("enquiry_detail", eid=eid))
+    return redirect(_safe_next(request.form.get("next"), url_for("enquiry_detail", eid=eid)))
 
 
 @app.route("/enquiry/<int:eid>/order/advance-all", methods=["POST"])
@@ -928,11 +998,11 @@ def orders_export():
     writer.writerow(["Customer", "Company", "Products", "Delivery Date", "Stage", "Overdue", "Tax Invoice No.", "Tax Invoice Date"])
     for item in items:
         e = item["row"]
-        writer.writerow([
+        writer.writerow([_csv_cell(v) for v in [
             e["customer_name"], e["company_name"] or "", item["product_summary"],
             e["delivery_date"] or "", item["stage_label"], "Yes" if item["overdue"] else "No",
             e["tax_invoice_no"] or "", e["tax_invoice_date"] or "",
-        ])
+        ]])
     return Response(
         buf.getvalue(),
         mimetype="text/csv",
@@ -988,6 +1058,8 @@ def dashboard():
             date_clause = ""
             date_params = ()
 
+    advance_pct = _advance_pct(get_settings())
+
     total_enquiries = db.execute(
         f"SELECT COUNT(*) c FROM enquiries e {date_clause}", date_params
     ).fetchone()["c"]
@@ -1025,7 +1097,7 @@ def dashboard():
         date_params + (today.isoformat(),),
     ).fetchall()
     overdue_count = len(overdue_rows)
-    overdue_amount = round(sum((r["rate"] or 0) * (r["quantity"] or 1) for r in overdue_rows), 2)
+    overdue_amount = round(sum(_to_float(r["rate"]) * (_to_float(r["quantity"], 1.0) or 1.0) for r in overdue_rows), 2)
 
     conversion_rate = 0
     if total_enquiries:
@@ -1054,9 +1126,9 @@ def dashboard():
         "confirmed_count": confirmed_count,
         "confirmed_value": round(confirmed_value, 2),
         "pending_advance_count": pending_advance["c"],
-        "pending_advance_amount": round(pending_advance["amt"], 2),
+        "pending_advance_amount": round(pending_advance["amt"] * advance_pct / 100, 2),
         "pending_balance_count": pending_balance["c"],
-        "pending_balance_amount": round(pending_balance["amt"], 2),
+        "pending_balance_amount": round(pending_balance["amt"] * (100 - advance_pct) / 100, 2),
         "overdue_count": overdue_count,
         "overdue_amount": overdue_amount,
         "conversion_rate": conversion_rate,
@@ -1078,6 +1150,14 @@ def dashboard():
 def settings_page():
     db = get_db()
     if request.method == "POST":
+        try:
+            pct = float(request.form.get("advance_percent", "").strip())
+            days = int(request.form.get("balance_days", "").strip())
+            if not 0 <= pct <= 100 or days < 0:
+                raise ValueError
+        except ValueError:
+            flash("Advance must be a number from 0 to 100 and balance days a whole number. Nothing was saved.", "error")
+            return redirect(url_for("settings_page"))
         for key in DEFAULT_SETTINGS.keys():
             value = request.form.get(key, "").strip()
             db.execute(
@@ -1164,18 +1244,45 @@ def partners_toggle_admin(uid):
     return redirect(url_for("partners_page"))
 
 
+@app.route("/settings/backup")
+@login_required
+@admin_required
+def settings_backup():
+    """Download a consistent copy of the whole database (admin only)."""
+    fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        src = sqlite3.connect(DB_PATH)
+        dst = sqlite3.connect(tmp_path)
+        src.backup(dst)
+        dst.close()
+        src.close()
+        with open(tmp_path, "rb") as fh:
+            data = fh.read()
+    finally:
+        os.remove(tmp_path)
+    stamp = datetime.now(IST).strftime("%Y-%m-%d_%H%M")
+    return Response(
+        data,
+        mimetype="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename=vardhaman-backup-{stamp}.db"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Quotes
 # ---------------------------------------------------------------------------
 
 def build_quote_text(enquiry, items, settings):
-    advance_pct = float(settings.get("advance_percent", 25) or 25)
+    advance_pct = _advance_pct(settings)
 
     product_lines = []
     grand_total = 0
     for item in items:
-        rate = item["rate"] or 0
-        quantity = item["quantity"] or 1
+        rate = _to_float(item["rate"])
+        quantity = _to_float(item["quantity"], 1.0) or 1.0
+        rate = int(rate) if rate == int(rate) else rate
+        quantity = int(quantity) if quantity == int(quantity) else quantity
         subtotal = round(rate * quantity, 2)
         grand_total += subtotal
         raw_unit = (item["rate_unit"] or "unit").strip()
