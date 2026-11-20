@@ -30,31 +30,31 @@
   <div class="stat-card">
     <span class="stat-label">Confirmed orders</span>
     <span class="stat-value">{{ stats.confirmed_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.confirmed_value }} total</span>
+    <span class="stat-sub">Rs. {{ stats.confirmed_value|inr }} total</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Pending advance</span>
     <span class="stat-value">{{ stats.pending_advance_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.pending_advance_amount }}</span>
+    <span class="stat-sub">Rs. {{ stats.pending_advance_amount|inr }} to collect</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Pending balance</span>
     <span class="stat-value">{{ stats.pending_balance_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.pending_balance_amount }}</span>
+    <span class="stat-sub">Rs. {{ stats.pending_balance_amount|inr }} to collect</span>
   </div>
   <div class="stat-card {{ 'stat-card-alert' if stats.overdue_count }}">
     <span class="stat-label">Overdue</span>
     <span class="stat-value">{{ stats.overdue_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.overdue_amount }}</span>
+    <span class="stat-sub">Rs. {{ stats.overdue_amount|inr }} unpaid</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Conversion rate</span>
     <span class="stat-value">{{ stats.conversion_rate }}%</span>
-    <span class="stat-sub">confirmed orders / total enquiries</span>
+    <span class="stat-sub">confirmed out of all enquiries</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Average quote value</span>
-    <span class="stat-value">Rs. {{ stats.avg_quote_value }}</span>
+    <span class="stat-value">Rs. {{ stats.avg_quote_value|round|inr }}</span>
   </div>
 </div>
 

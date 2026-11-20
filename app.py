@@ -317,6 +317,42 @@ def now_str():
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def fdate(value):
+    """2026-12-05 (or a timestamp) -> '5 Dec 2026'. Anything else is shown as typed."""
+    if not value:
+        return "-"
+    try:
+        d = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return str(value)
+    return f"{d.day} {d.strftime('%b %Y')}"
+
+
+def inr(value):
+    """Indian digit grouping: 683450 -> 6,83,450 (paise shown only when present)."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    whole, _, frac = (f"{n:.2f}").partition(".")
+    if len(whole) > 3:
+        head, tail = whole[:-3], whole[-3:]
+        parts = []
+        while len(head) > 2:
+            parts.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            parts.insert(0, head)
+        whole = ",".join(parts) + "," + tail
+    return sign + whole + ("" if frac == "00" else "." + frac)
+
+
+app.add_template_filter(fdate, "fdate")
+app.add_template_filter(inr, "inr")
+
+
 def _to_float(value, default=0.0):
     """Forgiving number reader for display and quote maths, so one bad value
     already sitting in the database can never crash a page."""
@@ -941,9 +977,17 @@ def _query_orders(show_completed, sort, sort_dir):
         if unconfirmed_items:
             unconfirmed_names = ", ".join(i["product_category"] or "product" for i in unconfirmed_items)
             product_summary += f" (+ {unconfirmed_names}, not yet confirmed)"
+        overdue_days = 0
+        if overdue:
+            try:
+                overdue_days = (today_ist() - date.fromisoformat(e["delivery_date"][:10])).days
+            except ValueError:
+                overdue_days = 0
         items.append({
             "row": e,
             "overdue": overdue,
+            "overdue_days": overdue_days,
+            "stage_index": STAGE_RANK[stage],
             "stage": stage,
             "stage_label": STAGE_LABEL[stage],
             "next_label": NEXT_ACTION_LABEL[stage],
@@ -1287,7 +1331,7 @@ def build_quote_text(enquiry, items, settings):
         grand_total += subtotal
         raw_unit = (item["rate_unit"] or "unit").strip()
         unit_noun = raw_unit[4:].strip() if raw_unit.lower().startswith("per ") else raw_unit
-        product_lines.append(f"- {item['product_category'] or 'Product'}: {quantity} {unit_noun} x Rs. {rate} = Rs. {subtotal}")
+        product_lines.append(f"- {item['product_category'] or 'Product'}: {quantity} {unit_noun} x Rs. {inr(rate)} = Rs. {inr(subtotal)}")
         if item["specs"]:
             product_lines.append(f"  Specs: {item['specs']}")
 
@@ -1305,13 +1349,13 @@ def build_quote_text(enquiry, items, settings):
         "Products:",
         *product_lines,
         "",
-        f"Total: Rs. {grand_total}",
+        f"Total: Rs. {inr(grand_total)}",
         "",
-        f"Advance ({advance_pct:.0f}%): Rs. {advance_amt}",
-        f"Balance ({100 - advance_pct:.0f}%): Rs. {balance_amt}",
+        f"Advance ({advance_pct:.0f}%): Rs. {inr(advance_amt)}",
+        f"Balance ({100 - advance_pct:.0f}%): Rs. {inr(balance_amt)}",
         f"Balance due within {settings.get('balance_days', '30')} days of delivery",
         "",
-        f"Delivery: {enquiry['delivery_date'] or 'TBD'}",
+        f"Delivery: {fdate(enquiry['delivery_date']) if enquiry['delivery_date'] else 'TBD'}",
         "",
         "Bank details:",
         f"  A/c name: {settings.get('bank_account_name', '')}",

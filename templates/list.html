@@ -1,18 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-  <h1>Enquiries</h1>
+  <div><h1>{{ 'Archive' if archive else 'Enquiries' }}</h1><div class="page-sub">{{ enquiries|length }} {{ 'enquiry' if enquiries|length == 1 else 'enquiries' }}</div></div>
   <div class="header-actions">
-    <a href="{{ url_for('enquiries_export', q=q or None, product=product_filter or None, delivery_from=delivery_from or None, delivery_to=delivery_to or None, sort=sort or None, dir=sort_dir) }}" class="btn">Export CSV</a>
+    <a href="{{ url_for('enquiries_export', q=q or None, product=product_filter or None, delivery_from=delivery_from or None, delivery_to=delivery_to or None, sort=sort or None, dir=sort_dir, archive=1 if archive else None) }}" class="btn">Export CSV</a>
+    {% if archive %}
+    <a href="{{ url_for('enquiries') }}" class="btn">Back to Enquiries</a>
+    {% else %}
+    <a href="{{ url_for('enquiries_archive') }}" class="btn">Archive</a>
     <a href="{{ url_for('enquiry_add') }}" class="btn btn-primary">+ Add Enquiry</a>
+    {% endif %}
   </div>
 </div>
 
+<p class="muted small">
+  {% if archive %}
+  Enquiries older than 6 months that never became an order. Confirming any product moves the enquiry to Orders.
+  {% else %}
+  Confirming any product moves the enquiry to Orders. Enquiries older than 6 months that were never confirmed move to Archive.
+  {% endif %}
+</p>
+
 <form class="filter-form" method="GET">
-  <label class="muted small">Search
-    <input type="text" name="q" placeholder="Customer or company name" value="{{ q }}">
+  <label class="f-search">Search
+    <input type="text" name="q" placeholder="Customer or company" value="{{ q }}">
   </label>
-  <label class="muted small">Product
+  <label class="f-product">Product
     <select name="product">
       <option value="">All products</option>
       {% for cat in all_categories %}
@@ -20,15 +33,15 @@
       {% endfor %}
     </select>
   </label>
-  <label class="muted small">Delivery from
+  <label class="f-date">Delivery from
     <input type="date" name="delivery_from" value="{{ delivery_from }}">
   </label>
-  <label class="muted small">Delivery to
+  <label class="f-date">Delivery to
     <input type="date" name="delivery_to" value="{{ delivery_to }}">
   </label>
-  <button type="submit" class="btn">Filter</button>
+  <button type="submit" class="btn btn-primary">Filter</button>
   {% if q or product_filter or delivery_from or delivery_to %}
-  <a href="{{ url_for('enquiries') }}" class="btn">Clear</a>
+  <a href="{{ url_for('enquiries_archive') if archive else url_for('enquiries') }}" class="btn">Clear</a>
   {% endif %}
 </form>
 
@@ -49,21 +62,21 @@
       {% for row in enquiries %}
       {% set e = row.e %}
       <tr>
-        <td>
-          <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>{% if e.company_name %} <span class="muted small">({{ e.company_name }})</span>{% endif %}
-          {% if row.confirmed %}<span class="tag tag-confirmed">order</span>{% endif %}
+        <td class="cust">
+          <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>
+          {% if e.company_name and e.company_name|lower != e.customer_name|lower %}<div class="cust-sub">{{ e.company_name }}</div>{% endif %}
         </td>
-        <td class="nowrap">{{ e.enquiry_date or '-' }}</td>
-        <td>{{ row.product_summary }}</td>
-        <td>{{ e.partner_name }}</td>
-        <td class="nowrap">{{ e.delivery_date or '-' }}</td>
-        <td><a href="{{ url_for('enquiry_detail', eid=e.id) }}">View</a></td>
+        <td class="cell-date" data-label="Enquiry">{{ e.enquiry_date|fdate }}</td>
+        <td class="cell-prod" data-label="Product">{{ row.product_summary }}</td>
+        <td data-label="Partner">{{ e.partner_name }}</td>
+        <td class="cell-date" data-label="Delivery">{{ e.delivery_date|fdate }}</td>
+        <td class="nowrap"><a href="{{ url_for('enquiry_detail', eid=e.id) }}" class="link-quiet">View</a></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 {% else %}
-<p class="empty-state">No enquiries match these filters.</p>
+<p class="empty-state">{{ 'Nothing in the archive.' if archive else 'No enquiries match these filters.' }}</p>
 {% endif %}
 {% endblock %}

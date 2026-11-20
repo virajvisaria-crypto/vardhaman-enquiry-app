@@ -24,11 +24,11 @@
     <tbody>
       {% for u in users %}
       <tr>
-        <td>{{ u.name }}</td>
-        <td>{{ u.email }}</td>
-        <td>{{ 'Active' if u.is_active else 'Disabled' }}</td>
-        <td>{{ 'Admin' if u.is_admin else 'Partner' }}</td>
-        <td class="partner-actions">
+        <td class="cust"><strong>{{ u.name }}</strong></td>
+        <td data-label="Email">{{ u.email }}</td>
+        <td data-label="Status">{{ 'Active' if u.is_active else 'Disabled' }}</td>
+        <td data-label="Role">{{ 'Admin' if u.is_admin else 'Partner' }}</td>
+        <td class="act-cell"><div class="partner-actions">
           {% if u.id != current_user.id %}
           <form method="POST" action="{{ url_for('partners_toggle_active', uid=u.id) }}" style="display:inline">
             <button type="submit" class="btn btn-small">{{ 'Disable' if u.is_active else 'Enable' }}</button>
@@ -39,7 +39,7 @@
           {% else %}
           <span class="muted small">(you)</span>
           {% endif %}
-        </td>
+        </div></td>
       </tr>
       {% endfor %}
     </tbody>

@@ -19,18 +19,19 @@
   <div><span class="label">Company</span>{{ enquiry.company_name or '-' }}</div>
   <div><span class="label">Phone</span>{{ enquiry.phone }}</div>
   <div><span class="label">Email</span>{{ enquiry.email or '-' }}</div>
-  <div><span class="label">Delivery date</span>{{ enquiry.delivery_date or '-' }}</div>
+  <div><span class="label">Delivery date</span>{{ enquiry.delivery_date|fdate }}</div>
   <div><span class="label">Partner accountable</span>{{ enquiry.partner_name }}</div>
 </div>
 
 {% if items|selectattr('item.confirmed')|list %}
 <h2>Order details</h2>
+<p class="section-hint">One tax invoice for the whole order.</p>
 <form method="POST" action="{{ url_for('enquiry_invoice_update', eid=enquiry.id) }}" class="order-form">
   <div class="form-row">
-    <label>Tax Invoice No. <span class="muted small">(one invoice for the whole order)</span>
+    <label>Tax invoice no.
       <input type="text" name="tax_invoice_no" value="{{ enquiry.tax_invoice_no or '' }}">
     </label>
-    <label>Tax Invoice Date
+    <label>Tax invoice date
       <input type="date" name="tax_invoice_date" value="{{ enquiry.tax_invoice_date or '' }}">
     </label>
   </div>
@@ -43,7 +44,7 @@
 {% set item = entry.item %}
 <div class="item-block">
   <div class="item-block-header">
-    <span class="item-block-title">{{ item.product_category or 'Product' }}{% if item.quantity and item.rate %} &middot; {{ item.quantity }} {{ item.rate_unit or '' }} &times; Rs. {{ item.rate }}{% endif %}</span>
+    <span class="item-block-title">{{ item.product_category or 'Product' }}{% if item.quantity and item.rate %}: {{ item.quantity|inr }} {{ (item.rate_unit or '')|replace('per ', '') }} &times; Rs. {{ item.rate|inr }}{% endif %}</span>
     {% if entry.stage %}<span class="tag tag-stage-{{ entry.stage }}">{{ entry.stage|capitalize }}</span>{% endif %}
   </div>
   {% if item.specs %}<p class="muted small">{{ item.specs }}</p>{% endif %}
@@ -52,22 +53,22 @@
     <label class="checkbox-row">
       <input type="checkbox" name="confirmed" {{ 'checked' if item.confirmed }}>
       Confirmed
-      {% if item.confirmed_date %}<span class="muted">({{ item.confirmed_date }})</span>{% endif %}
+      {% if item.confirmed_date %}<span class="muted">({{ item.confirmed_date|fdate }})</span>{% endif %}
     </label>
     <label class="checkbox-row">
       <input type="checkbox" name="advance_received" {{ 'checked' if item.advance_received }}>
       Advance received
-      {% if item.advance_received_date %}<span class="muted">({{ item.advance_received_date }})</span>{% endif %}
+      {% if item.advance_received_date %}<span class="muted">({{ item.advance_received_date|fdate }})</span>{% endif %}
     </label>
     <label class="checkbox-row">
       <input type="checkbox" name="dispatched" {{ 'checked' if item.dispatched }}>
       Dispatched
-      {% if item.dispatched_date %}<span class="muted">({{ item.dispatched_date }})</span>{% endif %}
+      {% if item.dispatched_date %}<span class="muted">({{ item.dispatched_date|fdate }})</span>{% endif %}
     </label>
     <label class="checkbox-row">
       <input type="checkbox" name="balance_received" {{ 'checked' if item.balance_received }}>
       Balance received
-      {% if item.balance_received_date %}<span class="muted">({{ item.balance_received_date }})</span>{% endif %}
+      {% if item.balance_received_date %}<span class="muted">({{ item.balance_received_date|fdate }})</span>{% endif %}
     </label>
     <button type="submit" class="btn btn-small btn-primary">Update this product</button>
   </form>

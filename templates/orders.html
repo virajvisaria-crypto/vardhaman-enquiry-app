@@ -1,26 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-  <h1>Orders</h1>
+  <div>
+    <h1>Orders</h1>
+    <div class="page-sub">
+      {{ items|length }} {{ 'orders' if show_completed else 'active orders' }}{% set late = items|selectattr('overdue')|list|length %}{% if late %}, <b>{{ late }} overdue</b>{% endif %}
+    </div>
+  </div>
   <div class="header-actions">
-    <a href="{{ url_for('orders_export', show_completed=1 if show_completed else None, sort=sort or None, dir=sort_dir) }}" class="btn">Export CSV</a>
     {% if show_completed %}
     <a href="{{ url_for('orders_page') }}" class="btn">Hide completed</a>
     {% else %}
-    <a href="{{ url_for('orders_page', show_completed=1) }}" class="btn">Show completed too</a>
+    <a href="{{ url_for('orders_page', show_completed=1) }}" class="btn">Show completed</a>
     {% endif %}
+    <a href="{{ url_for('orders_export', show_completed=1 if show_completed else None, sort=sort or None, dir=sort_dir) }}" class="btn">Export CSV</a>
   </div>
 </div>
-
-<p class="muted small">
-  {% if show_completed %}
-  All confirmed orders, including completed ones.
-  {% else %}
-  Active orders only. Completed orders are hidden.
-  {% endif %}
-  Click a column header to sort. The button below advances every product line in an order
-  together, open an order to move individual product lines separately.
-</p>
 
 {% if items %}
 <div class="table-wrap">
@@ -37,30 +32,42 @@
     <tbody>
       {% for item in items %}
       {% set e = item.row %}
-      <tr class="{{ 'row-overdue' if item.overdue }}">
-        <td>
-          <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>{% if e.company_name %} <span class="muted small">({{ e.company_name }})</span>{% endif %}
+      <tr>
+        <td class="cust">
+          <a href="{{ url_for('enquiry_detail', eid=e.id) }}">{{ e.customer_name }}</a>
+          {% if e.company_name and e.company_name|lower != e.customer_name|lower %}<div class="cust-sub">{{ e.company_name }}</div>{% endif %}
         </td>
-        <td>{{ item.product_summary }}{% if item.item_count > 1 %} <span class="muted small">({{ item.item_count }} products)</span>{% endif %}</td>
-        <td>{{ e.delivery_date or '-' }}{% if item.overdue %} <span class="tag tag-overdue">overdue</span>{% endif %}</td>
-        <td>
-          <span class="tag tag-stage-{{ item.stage }}">{{ item.stage_label }}</span>
-          {% if item.mixed_stage %}<span class="muted small">(mixed)</span>{% endif %}
+        <td class="cell-prod" data-label="Products">
+          {{ item.product_summary }}
+          {% if item.item_count > 1 %}<div class="cust-sub">{{ item.item_count }} confirmed</div>{% endif %}
+          {% if item.has_unconfirmed %}<span class="tag tag-pending">has unconfirmed item</span>{% endif %}
         </td>
-        <td class="partner-actions">
-          {% if item.next_label %}
-          <form method="POST" action="{{ url_for('order_advance_all', eid=e.id) }}" style="display:inline">
-            <button type="submit" class="btn btn-small btn-primary">{{ item.next_label }}</button>
-          </form>
-          {% endif %}
-          <a href="{{ url_for('enquiry_detail', eid=e.id) }}" class="btn btn-small">View</a>
+        <td data-label="Delivery">
+          <div class="cell-date" style="display:inline-block">{{ e.delivery_date|fdate }}</div>
+          {% if item.overdue and item.overdue_days %}<div class="late">{{ item.overdue_days }} day{{ '' if item.overdue_days == 1 else 's' }} overdue</div>
+          {% elif item.overdue %}<div class="late">Overdue</div>{% endif %}
+        </td>
+        <td data-label="Stage">
+          <div class="stagebar" title="{{ item.stage_label }}">{% for k in range(4) %}<i class="{{ 'on' if k <= item.stage_index }}"></i>{% endfor %}</div>
+          <div class="stage-label">{{ item.stage_label }}{% if item.mixed_stage %} <span class="stage-note">(mixed)</span>{% endif %}</div>
+        </td>
+        <td class="act-cell">
+          <div class="partner-actions">
+            {% if item.next_label %}
+            <form method="POST" action="{{ url_for('order_advance_all', eid=e.id) }}" style="display:inline">
+              <button type="submit" class="btn btn-small btn-outline">{{ item.next_label }}</button>
+            </form>
+            {% endif %}
+            <a href="{{ url_for('enquiry_detail', eid=e.id) }}" class="link-quiet">View</a>
+          </div>
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+<p class="muted small" style="margin-top:14px">The button moves every confirmed product in an order forward one stage. Open an order to move products separately.</p>
 {% else %}
-<p class="empty-state">No confirmed orders yet.</p>
+<p class="empty-state">No active orders. Confirm a product on an enquiry and it shows up here.</p>
 {% endif %}
 {% endblock %}

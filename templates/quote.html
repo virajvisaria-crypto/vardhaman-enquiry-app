@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-  <h1>Quote - {{ enquiry.customer_name }}</h1>
+  <h1>Quote for {{ enquiry.customer_name }}</h1>
   <a href="{{ url_for('enquiry_detail', eid=enquiry.id) }}" class="btn">Back</a>
 </div>
 
 <pre class="quote-box" id="quoteText">{{ quote_text }}</pre>
 
 <div class="quote-actions">
-  <button class="btn btn-primary" onclick="copyQuote()">Copy quote</button>
+  <button class="btn btn-primary" id="copyBtn" onclick="copyQuote()">Copy quote</button>
   <a class="btn" href="{{ whatsapp_url }}" target="_blank" rel="noopener">WhatsApp draft</a>
   <form method="POST" action="{{ url_for('enquiry_quote_email', eid=enquiry.id) }}" style="display:inline">
     <button type="submit" class="btn">Email quote</button>
@@ -16,14 +16,16 @@
 </div>
 
 <p class="muted small">
-  Total Rs. {{ total }} &middot; Advance Rs. {{ advance_amt }} &middot; Balance Rs. {{ balance_amt }}
+  Total Rs. {{ total|inr }}. Advance Rs. {{ advance_amt|inr }}. Balance Rs. {{ balance_amt|inr }}.
 </p>
 
 <script>
 function copyQuote() {
   const text = document.getElementById('quoteText').innerText;
   navigator.clipboard.writeText(text).then(function() {
-    alert('Quote copied to clipboard');
+    var b = document.getElementById('copyBtn');
+    b.textContent = 'Copied';
+    setTimeout(function() { b.textContent = 'Copy quote'; }, 1800);
   });
 }
 </script>
