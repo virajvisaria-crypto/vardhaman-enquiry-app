@@ -1079,6 +1079,9 @@ def _period_range(period, today):
     return None, None  # "all"
 
 
+PIPELINE_LABELS = ["Confirmed", "Advance received", "Dispatched", "Balance received"]
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -1087,68 +1090,89 @@ def dashboard():
     custom_from = request.args.get("from", "").strip()
     custom_to = request.args.get("to", "").strip()
     today = today_ist()
+    advance_pct = _advance_pct(get_settings())
 
+    # ---- "Right now": the live pipeline. Never depends on the period picker,
+    # so it always matches the Orders page. ----
+    orders = _query_orders(True, "", "asc")
+    order_values = {
+        r["enquiry_id"]: _to_float(r["v"])
+        for r in db.execute(
+            "SELECT enquiry_id, SUM(rate * quantity) v FROM enquiry_items WHERE confirmed = 1 GROUP BY enquiry_id"
+        ).fetchall()
+    }
+    stage_counts = [0, 0, 0, 0]
+    stage_values = [0.0, 0.0, 0.0, 0.0]
+    for o in orders:
+        stage_counts[o["stage_index"]] += 1
+        stage_values[o["stage_index"]] += order_values.get(o["row"]["id"], 0.0)
+    biggest = max(stage_counts) or 1
+    stages = [
+        {"label": PIPELINE_LABELS[k], "count": stage_counts[k], "value": round(stage_values[k], 2),
+         "pct": round(100 * stage_counts[k] / biggest)}
+        for k in range(4)
+    ]
+    active_count = sum(stage_counts[:3])
+
+    advance_due = balance_due = 0.0
+    advance_lines = balance_lines = 0
+    for r in db.execute(
+        "SELECT rate, quantity, advance_received, dispatched FROM enquiry_items "
+        "WHERE confirmed = 1 AND balance_received = 0"
+    ).fetchall():
+        value = _to_float(r["rate"]) * (_to_float(r["quantity"], 1.0) or 1.0)
+        if not r["advance_received"]:
+            advance_due += value * advance_pct / 100
+            advance_lines += 1
+        if r["dispatched"]:
+            balance_due += value * (100 - advance_pct) / 100
+            balance_lines += 1
+
+    overdue_orders = sorted((o for o in orders if o["overdue"]), key=lambda o: o["row"]["delivery_date"] or "")
+    overdue_unpaid = 0.0
+    for r in db.execute(
+        """SELECT i.rate, i.quantity, i.advance_received FROM enquiry_items i
+           JOIN enquiries e ON e.id = i.enquiry_id
+           WHERE i.confirmed = 1 AND i.balance_received = 0
+           AND e.delivery_date IS NOT NULL AND e.delivery_date != '' AND e.delivery_date < ?""",
+        (today.isoformat(),),
+    ).fetchall():
+        value = _to_float(r["rate"]) * (_to_float(r["quantity"], 1.0) or 1.0)
+        overdue_unpaid += value * (100 - advance_pct) / 100 if r["advance_received"] else value
+
+    # ---- "In this period": enquiries and sales, filtered by Enquiry Date ----
     if period == "custom" and custom_from and custom_to:
         date_clause = "WHERE e.enquiry_date BETWEEN ? AND ?"
         date_params = (custom_from, custom_to)
+        period_label = f"{fdate(custom_from)} to {fdate(custom_to)}"
     else:
         if period not in PERIODS:
             period = "month"
         date_from, date_to = _period_range(period, today)
+        period_label = PERIODS[period]
         if date_from:
             date_clause = "WHERE e.enquiry_date BETWEEN ? AND ?"
             date_params = (date_from.isoformat(), date_to.isoformat())
         else:
             date_clause = ""
             date_params = ()
-
-    advance_pct = _advance_pct(get_settings())
+    and_or_where = " AND" if date_clause else "WHERE"
 
     total_enquiries = db.execute(
         f"SELECT COUNT(*) c FROM enquiries e {date_clause}", date_params
     ).fetchone()["c"]
-
     confirmed_count = db.execute(
         f"""SELECT COUNT(DISTINCT e.id) c FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1""",
+            {date_clause}{and_or_where} i.confirmed = 1""",
         date_params,
     ).fetchone()["c"]
-
     confirmed_value = db.execute(
         f"""SELECT COALESCE(SUM(i.rate * i.quantity), 0) v FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1""",
+            {date_clause}{and_or_where} i.confirmed = 1""",
         date_params,
     ).fetchone()["v"]
+    conversion_rate = round(100 * confirmed_count / total_enquiries, 1) if total_enquiries else 0
 
-    pending_advance = db.execute(
-        f"""SELECT COUNT(*) c, COALESCE(SUM(i.rate * i.quantity), 0) amt
-            FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1 AND i.advance_received = 0""",
-        date_params,
-    ).fetchone()
-
-    pending_balance = db.execute(
-        f"""SELECT COUNT(*) c, COALESCE(SUM(i.rate * i.quantity), 0) amt
-            FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} i.dispatched = 1 AND i.balance_received = 0""",
-        date_params,
-    ).fetchone()
-
-    overdue_rows = db.execute(
-        f"""SELECT i.rate, i.quantity FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
-            {date_clause}{' AND' if date_clause else 'WHERE'} i.confirmed = 1 AND i.balance_received = 0
-            AND e.delivery_date IS NOT NULL AND e.delivery_date != '' AND e.delivery_date < ?""",
-        date_params + (today.isoformat(),),
-    ).fetchall()
-    overdue_count = len(overdue_rows)
-    overdue_amount = round(sum(_to_float(r["rate"]) * (_to_float(r["quantity"], 1.0) or 1.0) for r in overdue_rows), 2)
-
-    conversion_rate = 0
-    if total_enquiries:
-        conversion_rate = round(100 * confirmed_count / total_enquiries, 1)
-
-    # Average quote value = average of each enquiry's total across all its
-    # product lines, not the average of individual line items.
     per_enquiry_totals = db.execute(
         f"""SELECT SUM(i.rate * i.quantity) total FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
             {date_clause} GROUP BY e.id""",
@@ -1160,7 +1184,7 @@ def dashboard():
     by_category = db.execute(
         f"""SELECT COALESCE(NULLIF(TRIM(i.product_category), ''), 'Uncategorized') cat, COUNT(*) c
             FROM enquiries e JOIN enquiry_items i ON i.enquiry_id = e.id
-            {date_clause} GROUP BY cat ORDER BY c DESC""",
+            {date_clause} GROUP BY cat ORDER BY c DESC LIMIT 8""",
         date_params,
     ).fetchall()
     max_cat = max([r["c"] for r in by_category], default=1)
@@ -1169,18 +1193,17 @@ def dashboard():
         "total_enquiries": total_enquiries,
         "confirmed_count": confirmed_count,
         "confirmed_value": round(confirmed_value, 2),
-        "pending_advance_count": pending_advance["c"],
-        "pending_advance_amount": round(pending_advance["amt"] * advance_pct / 100, 2),
-        "pending_balance_count": pending_balance["c"],
-        "pending_balance_amount": round(pending_balance["amt"] * (100 - advance_pct) / 100, 2),
-        "overdue_count": overdue_count,
-        "overdue_amount": overdue_amount,
         "conversion_rate": conversion_rate,
         "avg_quote_value": avg_quote_value,
+        "advance_due": round(advance_due, 2), "advance_lines": advance_lines,
+        "balance_due": round(balance_due, 2), "balance_lines": balance_lines,
+        "overdue_count": len(overdue_orders), "overdue_unpaid": round(overdue_unpaid, 2),
     }
     return render_template(
-        "dashboard.html", stats=stats, by_category=by_category, max_cat=max_cat,
-        period=period, periods=PERIODS, custom_from=custom_from, custom_to=custom_to,
+        "dashboard.html", stats=stats, stages=stages, active_count=active_count,
+        overdue_orders=overdue_orders[:6], by_category=by_category, max_cat=max_cat,
+        period=period, periods=PERIODS, period_label=period_label,
+        custom_from=custom_from, custom_to=custom_to,
     )
 
 

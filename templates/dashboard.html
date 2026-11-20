@@ -1,56 +1,96 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-  <h1>Dashboard</h1>
+  <div>
+    <h1>Dashboard</h1>
+    <div class="page-sub">{{ active_count }} active order{{ '' if active_count == 1 else 's' }}{% if stats.overdue_count %}, <b>{{ stats.overdue_count }} overdue</b>{% endif %}</div>
+  </div>
 </div>
 
+<h2 class="sec">Order pipeline <span class="sec-note">Today, across all confirmed orders</span></h2>
+<div class="pipeline">
+  {% for s in stages %}
+  <div class="pipe {{ 'pipe-done' if loop.last }}">
+    <div class="pipe-name">{{ s.label }}</div>
+    <div class="pipe-count">{{ s.count }}</div>
+    <div class="pipe-val">Rs. {{ s.value|inr }}</div>
+    <div class="pipe-bar"><i style="width: {{ s.pct }}%"></i></div>
+  </div>
+  {% endfor %}
+</div>
+
+<h2 class="sec">Money to collect <span class="sec-note">Today, using your {{ settings.advance_percent }}% advance term</span></h2>
+<div class="stats-grid stats-3">
+  <div class="stat-card">
+    <span class="stat-label">Advance to collect</span>
+    <span class="stat-value">Rs. {{ stats.advance_due|inr }}</span>
+    <span class="stat-sub">{{ stats.advance_lines }} product{{ '' if stats.advance_lines == 1 else 's' }} waiting for advance</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Balance to collect</span>
+    <span class="stat-value">Rs. {{ stats.balance_due|inr }}</span>
+    <span class="stat-sub">{{ stats.balance_lines }} dispatched product{{ '' if stats.balance_lines == 1 else 's' }} not yet paid</span>
+  </div>
+  <div class="stat-card {{ 'stat-card-alert' if stats.overdue_count }}">
+    <span class="stat-label">Overdue and unpaid</span>
+    <span class="stat-value">Rs. {{ stats.overdue_unpaid|inr }}</span>
+    <span class="stat-sub">{{ stats.overdue_count }} order{{ '' if stats.overdue_count == 1 else 's' }} past delivery date</span>
+  </div>
+</div>
+
+<h2 class="sec">Overdue orders <span class="sec-note">Oldest delivery date first</span></h2>
+{% if overdue_orders %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead><tr><th>Customer</th><th>Delivery</th><th>Late by</th><th>Stage</th><th></th></tr></thead>
+    <tbody>
+      {% for o in overdue_orders %}
+      <tr>
+        <td class="cust"><a href="{{ url_for('enquiry_detail', eid=o.row.id) }}">{{ o.row.customer_name }}</a></td>
+        <td class="cell-date" data-label="Delivery">{{ o.row.delivery_date|fdate }}</td>
+        <td data-label="Late by"><span class="late">{{ o.overdue_days }} day{{ '' if o.overdue_days == 1 else 's' }}</span></td>
+        <td data-label="Stage"><span class="tag tag-stage-{{ o.stage }}">{{ o.stage_label }}</span></td>
+        <td class="nowrap act-cell"><a href="{{ url_for('enquiry_detail', eid=o.row.id) }}" class="link-quiet">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if stats.overdue_count > overdue_orders|length %}
+<p class="see-all"><a href="{{ url_for('orders_page', sort='delivery', dir='asc') }}">See all {{ stats.overdue_count }} overdue orders</a></p>
+{% endif %}
+{% else %}
+<p class="empty-state">No overdue orders.</p>
+{% endif %}
+
+<h2 class="sec">Enquiries and sales <span class="sec-note">{{ period_label }}, by enquiry date</span></h2>
 <div class="filter-tabs">
   {% for key, label in periods.items() %}
   <a href="{{ url_for('dashboard', period=key) }}" class="{{ 'active' if period == key }}">{{ label }}</a>
   {% endfor %}
   <a href="#custom-range" class="{{ 'active' if period == 'custom' }}">Custom range</a>
 </div>
-
-<form method="GET" action="{{ url_for('dashboard') }}" class="date-range-form" id="custom-range">
+<form method="GET" action="{{ url_for('dashboard') }}" class="date-range-form {{ 'open' if period == 'custom' }}" id="custom-range">
   <input type="hidden" name="period" value="custom">
-  <label class="muted small">From
-    <input type="date" name="from" value="{{ custom_from }}">
-  </label>
-  <label class="muted small">To
-    <input type="date" name="to" value="{{ custom_to }}">
-  </label>
+  <label>From <input type="date" name="from" value="{{ custom_from }}"></label>
+  <label>To <input type="date" name="to" value="{{ custom_to }}"></label>
   <button type="submit" class="btn">Apply</button>
 </form>
 
-<div class="stats-grid">
+<div class="stats-grid stats-4">
   <div class="stat-card">
-    <span class="stat-label">Enquiries</span>
+    <span class="stat-label">Enquiries received</span>
     <span class="stat-value">{{ stats.total_enquiries }}</span>
   </div>
   <div class="stat-card">
-    <span class="stat-label">Confirmed orders</span>
+    <span class="stat-label">Became orders</span>
     <span class="stat-value">{{ stats.confirmed_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.confirmed_value|inr }} total</span>
-  </div>
-  <div class="stat-card">
-    <span class="stat-label">Pending advance</span>
-    <span class="stat-value">{{ stats.pending_advance_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.pending_advance_amount|inr }} to collect</span>
-  </div>
-  <div class="stat-card">
-    <span class="stat-label">Pending balance</span>
-    <span class="stat-value">{{ stats.pending_balance_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.pending_balance_amount|inr }} to collect</span>
-  </div>
-  <div class="stat-card {{ 'stat-card-alert' if stats.overdue_count }}">
-    <span class="stat-label">Overdue</span>
-    <span class="stat-value">{{ stats.overdue_count }}</span>
-    <span class="stat-sub">Rs. {{ stats.overdue_amount|inr }} unpaid</span>
+    <span class="stat-sub">Rs. {{ stats.confirmed_value|inr }} order value</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Conversion rate</span>
     <span class="stat-value">{{ stats.conversion_rate }}%</span>
-    <span class="stat-sub">confirmed out of all enquiries</span>
+    <span class="stat-sub">of enquiries confirmed</span>
   </div>
   <div class="stat-card">
     <span class="stat-label">Average quote value</span>
@@ -58,15 +98,13 @@
   </div>
 </div>
 
-<h2>Enquiries by product category</h2>
+<h3 class="sub-h">Products enquired about</h3>
 {% if by_category %}
 <div class="bar-chart">
   {% for row in by_category %}
   <div class="bar-row">
     <span class="bar-label">{{ row.cat }}</span>
-    <div class="bar-track">
-      <div class="bar-fill" style="width: {{ (row.c / max_cat * 100) | round(1) }}%"></div>
-    </div>
+    <div class="bar-track"><div class="bar-fill" style="width: {{ (row.c / max_cat * 100) | round(1) }}%"></div></div>
     <span class="bar-count">{{ row.c }}</span>
   </div>
   {% endfor %}
@@ -75,13 +113,10 @@
 <p class="empty-state">No enquiries in this period.</p>
 {% endif %}
 
-<p class="muted small">
-  All figures on this page are for the selected period above, based on each enquiry's Enquiry Date
-  (editable per enquiry, not when it was typed into the system).
-  "Conversion rate" is confirmed orders divided by total enquiries.
-  "Pending advance" is the advance amount still to collect on confirmed orders.
-  "Pending balance" is the balance amount still to collect on dispatched orders.
-  "Overdue" is confirmed, unpaid orders past their delivery date.
-  Enquiries not yet marked Confirmed aren't counted as orders anywhere on this page.
+<p class="muted small" style="margin-top:22px">
+  The pipeline, money and overdue sections always show today's position and ignore the period above.
+  Enquiries and sales follow the period, using each enquiry's Enquiry Date. Advance and balance amounts
+  use the advance percentage in Settings. Overdue means a confirmed order past its delivery date with
+  balance still unpaid.
 </p>
 {% endblock %}
